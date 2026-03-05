@@ -1,14 +1,18 @@
 {
-  mkShellNoCC,
+  mkShell,
   go,
   gopls,
   delve,
+  gofumpt,
+  golines,
 }:
-mkShellNoCC {
+mkShell {
   name = "go";
   packages = [
     delve
     go
     gopls
+    gofumpt
+    golines
   ];
 }
