@@ -1,0 +1,63 @@
+package config_test
+
+import (
+	"os"
+	"testing"
+
+	"notashelf.dev/ncro/internal/config"
+)
+
+func TestLoadDefaults(t *testing.T) {
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("Load(\"\") error: %v", err)
+	}
+	if cfg.Server.Listen != ":8080" {
+		t.Errorf("default listen = %q, want :8080", cfg.Server.Listen)
+	}
+	if len(cfg.Upstreams) == 0 {
+		t.Error("expected at least one default upstream")
+	}
+	if cfg.Cache.MaxEntries != 100000 {
+		t.Errorf("default max_entries = %d, want 100000", cfg.Cache.MaxEntries)
+	}
+}
+
+func TestLoadFromYAML(t *testing.T) {
+	yamlContent := `
+server:
+  listen: ":9090"
+upstreams:
+  - url: "https://cache.nixos.org"
+    priority: 10
+cache:
+  db_path: "/tmp/test.db"
+  max_entries: 500
+`
+	f, _ := os.CreateTemp("", "ncro-*.yaml")
+	defer os.Remove(f.Name())
+	f.WriteString(yamlContent)
+	f.Close()
+
+	cfg, err := config.Load(f.Name())
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if cfg.Server.Listen != ":9090" {
+		t.Errorf("listen = %q, want :9090", cfg.Server.Listen)
+	}
+	if cfg.Cache.MaxEntries != 500 {
+		t.Errorf("max_entries = %d, want 500", cfg.Cache.MaxEntries)
+	}
+}
+
+func TestEnvOverride(t *testing.T) {
+	t.Setenv("NCRO_LISTEN", ":1234")
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if cfg.Server.Listen != ":1234" {
+		t.Errorf("env override listen = %q, want :1234", cfg.Server.Listen)
+	}
+}
