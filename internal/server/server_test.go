@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -315,7 +316,7 @@ func TestNARRoutingUsesCache(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Pre-seed the route cache: abc123 → upstreamA, NarURL = "nar/abc123.nar.xz"
+	// Pre-seed the route cache: abc123 -> upstreamA, NarURL = "nar/abc123.nar.xz"
 	if err := db.SetRoute(&cache.RouteEntry{
 		StorePath:   "abc123",
 		UpstreamURL: upstreamA.URL,
@@ -381,5 +382,83 @@ func TestNARFallbackWhenFirstUpstreamMissing(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if string(body) != "nar-bytes" {
 		t.Errorf("NAR body = %q, want nar-bytes", body)
+	}
+}
+
+func TestHealthEndpointDegraded(t *testing.T) {
+	p := prober.New(0.3)
+	p.InitUpstreams([]config.UpstreamConfig{
+		{URL: "https://up1.example.com"},
+		{URL: "https://up2.example.com"},
+	})
+	p.RecordLatency("https://up1.example.com", 100)
+	for range 5 {
+		p.RecordFailure("https://up2.example.com")
+	}
+
+	db, err := cache.Open(":memory:", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	r := router.New(db, p, time.Hour, 5*time.Second, 10*time.Minute)
+	srv := server.New(r, p, db, []config.UpstreamConfig{
+		{URL: "https://up1.example.com"},
+		{URL: "https://up2.example.com"},
+	}, 30)
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("status = %d", w.Code)
+	}
+
+	var resp struct {
+		Status    string `json:"status"`
+		Upstreams []struct {
+			URL    string `json:"url"`
+			Status string `json:"status"`
+		} `json:"upstreams"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != "degraded" {
+		t.Errorf("status = %q, want degraded", resp.Status)
+	}
+	if len(resp.Upstreams) != 2 {
+		t.Errorf("upstreams = %d, want 2", len(resp.Upstreams))
+	}
+}
+
+func TestHealthEndpointAllDown(t *testing.T) {
+	p := prober.New(0.3)
+	p.InitUpstreams([]config.UpstreamConfig{{URL: "https://down.example.com"}})
+	for range 10 {
+		p.RecordFailure("https://down.example.com")
+	}
+
+	db, err := cache.Open(":memory:", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	r := router.New(db, p, time.Hour, 5*time.Second, 10*time.Minute)
+	srv := server.New(r, p, db, []config.UpstreamConfig{{URL: "https://down.example.com"}}, 30)
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, req)
+
+	var resp struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Status != "down" {
+		t.Errorf("status = %q, want down", resp.Status)
 	}
 }

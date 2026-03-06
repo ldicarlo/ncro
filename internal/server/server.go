@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -65,8 +66,45 @@ func (s *Server) handleCacheInfo(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	type upstreamStatus struct {
+		URL              string  `json:"url"`
+		Status           string  `json:"status"`
+		LatencyMs        float64 `json:"latency_ms"`
+		ConsecutiveFails uint32  `json:"consecutive_fails"`
+	}
+	type response struct {
+		Status    string           `json:"status"`
+		Upstreams []upstreamStatus `json:"upstreams"`
+	}
+
+	sorted := s.prober.SortedByLatency()
+	upstreams := make([]upstreamStatus, len(sorted))
+	var downCount int
+	var anyDegraded bool
+	for i, h := range sorted {
+		upstreams[i] = upstreamStatus{
+			URL:              h.URL,
+			Status:           strings.ToLower(h.Status.String()),
+			LatencyMs:        h.EMALatency,
+			ConsecutiveFails: h.ConsecutiveFails,
+		}
+		if h.Status == prober.StatusDown {
+			downCount++
+		} else if h.Status == prober.StatusDegraded {
+			anyDegraded = true
+		}
+	}
+
+	overall := "ok"
+	switch {
+	case len(sorted) > 0 && downCount == len(sorted):
+		overall = "down"
+	case downCount > 0 || anyDegraded:
+		overall = "degraded"
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintln(w, `{"status":"ok"}`)
+	json.NewEncoder(w).Encode(response{Status: overall, Upstreams: upstreams})
 }
 
 func (s *Server) handleNarinfo(w http.ResponseWriter, r *http.Request) {
