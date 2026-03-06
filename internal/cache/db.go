@@ -197,7 +197,7 @@ func (d *DB) ExpireOldRoutes() error {
 // Returns up to n non-expired routes ordered by most-recently-verified.
 func (d *DB) ListRecentRoutes(n int) ([]RouteEntry, error) {
 	rows, err := d.db.Query(`
-		SELECT store_path, upstream_url, latency_ema, last_verified, ttl, nar_hash, nar_size
+		SELECT store_path, upstream_url, latency_ema, last_verified, ttl, nar_hash, nar_size, nar_url
 		FROM routes WHERE ttl > ? ORDER BY last_verified DESC LIMIT ?`,
 		time.Now().Unix(), n)
 	if err != nil {
@@ -210,7 +210,7 @@ func (d *DB) ListRecentRoutes(n int) ([]RouteEntry, error) {
 		var lastVerifiedUnix, ttlUnix int64
 		if err := rows.Scan(
 			&e.StorePath, &e.UpstreamURL, &e.LatencyEMA,
-			&lastVerifiedUnix, &ttlUnix, &e.NarHash, &e.NarSize,
+			&lastVerifiedUnix, &ttlUnix, &e.NarHash, &e.NarSize, &e.NarURL,
 		); err != nil {
 			return nil, err
 		}

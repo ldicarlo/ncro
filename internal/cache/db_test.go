@@ -276,6 +276,24 @@ func TestGetRouteByNarURL(t *testing.T) {
 	if got2 != nil {
 		t.Error("expected nil for missing NarURL")
 	}
+
+	// Expired entry must not be returned (tests the AND ttl > ? predicate).
+	expired := &cache.RouteEntry{
+		StorePath:   "abc456",
+		UpstreamURL: "https://cache.nixos.org",
+		NarURL:      "nar/abc456.nar.xz",
+		TTL:         time.Now().Add(-time.Hour), // already in the past
+	}
+	if err := db.SetRoute(expired); err != nil {
+		t.Fatalf("SetRoute expired: %v", err)
+	}
+	got3, err := db.GetRouteByNarURL("nar/abc456.nar.xz")
+	if err != nil {
+		t.Fatalf("GetRouteByNarURL for expired: %v", err)
+	}
+	if got3 != nil {
+		t.Error("GetRouteByNarURL should return nil for an expired entry")
+	}
 }
 
 func TestLRUEviction(t *testing.T) {
