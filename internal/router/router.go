@@ -193,7 +193,7 @@ func (r *Router) race(storeHash string, candidates []string) (*Result, error) {
 	metrics.UpstreamLatency.WithLabelValues(winner.url).Observe(winner.latencyMs / 1000)
 
 	// Fetch narinfo body to parse metadata and forward to caller.
-	narInfoBytes, narHash, narSize := r.fetchNarInfo(winner.url, storeHash)
+	narInfoBytes, narURL, narHash, narSize := r.fetchNarInfo(winner.url, storeHash)
 
 	health := r.prober.GetHealth(winner.url)
 	ema := winner.latencyMs
@@ -213,31 +213,32 @@ func (r *Router) race(storeHash string, candidates []string) (*Result, error) {
 		TTL:          now.Add(r.routeTTL),
 		NarHash:      narHash,
 		NarSize:      narSize,
+		NarURL:       narURL,
 	})
 
 	return &Result{URL: winner.url, LatencyMs: winner.latencyMs, NarInfoBytes: narInfoBytes}, nil
 }
 
-// Fetches narinfo content from upstream, verifies its signature if a key is
-// configured for that upstream, and returns (body, narHash, narSize).
-// Returns (nil, "", 0) if the fetch fails or signature verification fails.
-func (r *Router) fetchNarInfo(upstream, storeHash string) ([]byte, string, uint64) {
+// Returns (body, narURL, narHash, narSize). narURL is the narinfo's URL field
+// (e.g. "nar/1wwh37...nar.xz"), used for direct NAR routing.
+// Returns (nil, "", "", 0) on fetch failure or signature verification failure.
+func (r *Router) fetchNarInfo(upstream, storeHash string) ([]byte, string, string, uint64) {
 	url := upstream + "/" + storeHash + ".narinfo"
 	resp, err := r.client.Get(url)
 	if err != nil {
-		return nil, "", 0
+		return nil, "", "", 0
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return nil, "", 0
+		return nil, "", "", 0
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, "", 0
+		return nil, "", "", 0
 	}
 	ni, err := narinfo.Parse(bytes.NewReader(body))
 	if err != nil {
-		return body, "", 0
+		return body, "", "", 0
 	}
 	r.mu.RLock()
 	pubKeyStr := r.upstreamKeys[upstream]
@@ -246,12 +247,12 @@ func (r *Router) fetchNarInfo(upstream, storeHash string) ([]byte, string, uint6
 		ok, err := ni.Verify(pubKeyStr)
 		if err != nil {
 			slog.Warn("narinfo: public key parse error", "upstream", upstream, "error", err)
-			return nil, "", 0
+			return nil, "", "", 0
 		}
 		if !ok {
 			slog.Warn("narinfo: signature verification failed", "upstream", upstream, "store", storeHash)
-			return nil, "", 0
+			return nil, "", "", 0
 		}
 	}
-	return body, ni.NarHash, ni.NarSize
+	return body, ni.URL, ni.NarHash, ni.NarSize
 }

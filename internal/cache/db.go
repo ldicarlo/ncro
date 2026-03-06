@@ -3,6 +3,7 @@ package cache
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -20,6 +21,7 @@ type RouteEntry struct {
 	TTL          time.Time
 	NarHash      string
 	NarSize      uint64
+	NarURL       string // narinfo URL field, e.g. "nar/1wwh37...nar.xz"
 }
 
 // Returns true if the entry exists and hasn't expired.
@@ -86,14 +88,31 @@ func migrate(db *sql.DB) error {
 		);
 		CREATE INDEX IF NOT EXISTS idx_negative_expires ON negative_cache(expires_at);
 	`)
+	if err != nil {
+		return err
+	}
+	// Add nar_url column if it does not exist yet (ALTER TABLE does not support
+	// IF NOT EXISTS in SQLite, so we ignore the "duplicate column" error).
+	if _, err := db.Exec(`ALTER TABLE routes ADD COLUMN nar_url TEXT DEFAULT ''`); err != nil {
+		if !isDuplicateColumn(err) {
+			return err
+		}
+	}
+	_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_routes_nar_url ON routes(nar_url)`)
 	return err
+}
+
+// Returns true when err is a SQLite "duplicate column name" error produced by
+// ALTER TABLE ADD COLUMN on a column that already exists.
+func isDuplicateColumn(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "duplicate column name")
 }
 
 // Returns the route for storePath, or nil if not found.
 func (d *DB) GetRoute(storePath string) (*RouteEntry, error) {
 	row := d.db.QueryRow(`
 		SELECT store_path, upstream_url, latency_ms, latency_ema,
-		       query_count, failure_count, last_verified, ttl, nar_hash, nar_size
+		       query_count, failure_count, last_verified, ttl, nar_hash, nar_size, nar_url
 		FROM routes WHERE store_path = ?`, storePath)
 
 	var e RouteEntry
@@ -101,7 +120,32 @@ func (d *DB) GetRoute(storePath string) (*RouteEntry, error) {
 	err := row.Scan(
 		&e.StorePath, &e.UpstreamURL, &e.LatencyMs, &e.LatencyEMA,
 		&e.QueryCount, &e.FailureCount, &lastVerifiedUnix, &ttlUnix,
-		&e.NarHash, &e.NarSize,
+		&e.NarHash, &e.NarSize, &e.NarURL,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	e.LastVerified = time.Unix(lastVerifiedUnix, 0).UTC()
+	e.TTL = time.Unix(ttlUnix, 0).UTC()
+	return &e, nil
+}
+
+// Returns the route whose narinfo URL matches narURL, or nil if not found / expired.
+func (d *DB) GetRouteByNarURL(narURL string) (*RouteEntry, error) {
+	row := d.db.QueryRow(`
+		SELECT store_path, upstream_url, latency_ms, latency_ema,
+		       query_count, failure_count, last_verified, ttl, nar_hash, nar_size, nar_url
+		FROM routes WHERE nar_url = ? AND ttl > ?`, narURL, time.Now().Unix())
+
+	var e RouteEntry
+	var lastVerifiedUnix, ttlUnix int64
+	err := row.Scan(
+		&e.StorePath, &e.UpstreamURL, &e.LatencyMs, &e.LatencyEMA,
+		&e.QueryCount, &e.FailureCount, &lastVerifiedUnix, &ttlUnix,
+		&e.NarHash, &e.NarSize, &e.NarURL,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -119,8 +163,8 @@ func (d *DB) SetRoute(entry *RouteEntry) error {
 	_, err := d.db.Exec(`
 		INSERT INTO routes
 			(store_path, upstream_url, latency_ms, latency_ema,
-			 query_count, failure_count, last_verified, ttl, nar_hash, nar_size)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 query_count, failure_count, last_verified, ttl, nar_hash, nar_size, nar_url)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(store_path) DO UPDATE SET
 			upstream_url  = excluded.upstream_url,
 			latency_ms    = excluded.latency_ms,
@@ -130,12 +174,13 @@ func (d *DB) SetRoute(entry *RouteEntry) error {
 			last_verified = excluded.last_verified,
 			ttl           = excluded.ttl,
 			nar_hash      = excluded.nar_hash,
-			nar_size      = excluded.nar_size`,
+			nar_size      = excluded.nar_size,
+			nar_url       = excluded.nar_url`,
 		entry.StorePath, entry.UpstreamURL,
 		entry.LatencyMs, entry.LatencyEMA,
 		entry.QueryCount, entry.FailureCount,
 		entry.LastVerified.Unix(), entry.TTL.Unix(),
-		entry.NarHash, entry.NarSize,
+		entry.NarHash, entry.NarSize, entry.NarURL,
 	)
 	if err != nil {
 		return err

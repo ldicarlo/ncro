@@ -240,6 +240,44 @@ func TestNegativeCacheExpiry(t *testing.T) {
 	}
 }
 
+func TestGetRouteByNarURL(t *testing.T) {
+	db, err := cache.Open(":memory:", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	entry := &cache.RouteEntry{
+		StorePath:   "abc123",
+		UpstreamURL: "https://cache.nixos.org",
+		NarURL:      "nar/abc123.nar.xz",
+		TTL:         time.Now().Add(time.Hour),
+	}
+	if err := db.SetRoute(entry); err != nil {
+		t.Fatalf("SetRoute: %v", err)
+	}
+
+	got, err := db.GetRouteByNarURL("nar/abc123.nar.xz")
+	if err != nil {
+		t.Fatalf("GetRouteByNarURL: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected non-nil entry")
+	}
+	if got.UpstreamURL != "https://cache.nixos.org" {
+		t.Errorf("UpstreamURL = %q", got.UpstreamURL)
+	}
+
+	// Non-existent NarURL returns nil.
+	got2, err := db.GetRouteByNarURL("nar/nonexistent.nar.xz")
+	if err != nil {
+		t.Fatalf("GetRouteByNarURL for missing: %v", err)
+	}
+	if got2 != nil {
+		t.Error("expected nil for missing NarURL")
+	}
+}
+
 func TestLRUEviction(t *testing.T) {
 	// Use maxEntries=3 to trigger eviction easily
 	f, _ := os.CreateTemp("", "ncro-lru-*.db")
