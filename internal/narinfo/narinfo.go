@@ -2,6 +2,8 @@ package narinfo
 
 import (
 	"bufio"
+	"crypto/ed25519"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"strconv"
@@ -21,6 +23,62 @@ type NarInfo struct {
 	Deriver     string
 	Sig         []string
 	CA          string
+}
+
+// ParsePublicKey parses a Nix public key in "name:base64(key)" format.
+func ParsePublicKey(s string) (name string, key ed25519.PublicKey, err error) {
+	name, b64, ok := strings.Cut(s, ":")
+	if !ok || name == "" {
+		return "", nil, fmt.Errorf("invalid public key %q: missing ':'", s)
+	}
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return "", nil, fmt.Errorf("invalid public key %q: %w", s, err)
+	}
+	if len(raw) != ed25519.PublicKeySize {
+		return "", nil, fmt.Errorf("invalid public key size %d, want %d", len(raw), ed25519.PublicKeySize)
+	}
+	return name, ed25519.PublicKey(raw), nil
+}
+
+// Fingerprint returns the canonical signing input for this narinfo.
+// Format: 1;<storePath>;<narHash>;<narSize>;<comma-separated-full-ref-paths>
+func (ni *NarInfo) Fingerprint() string {
+	refs := make([]string, len(ni.References))
+	for i, r := range ni.References {
+		if strings.HasPrefix(r, "/nix/store/") {
+			refs[i] = r
+		} else {
+			refs[i] = "/nix/store/" + r
+		}
+	}
+	return fmt.Sprintf("1;%s;%s;%d;%s",
+		ni.StorePath, ni.NarHash, ni.NarSize, strings.Join(refs, ","))
+}
+
+// Verify checks that at least one Sig line is a valid signature for pubKeyStr.
+// pubKeyStr must be in "name:base64(key)" Nix format.
+// Returns false (not an error) when no matching Sig line is found.
+func (ni *NarInfo) Verify(pubKeyStr string) (bool, error) {
+	keyName, key, err := ParsePublicKey(pubKeyStr)
+	if err != nil {
+		return false, err
+	}
+	fp := []byte(ni.Fingerprint())
+	for _, sigLine := range ni.Sig {
+		name, b64, ok := strings.Cut(sigLine, ":")
+		if !ok || name != keyName {
+			continue
+		}
+		sig, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil || len(sig) != ed25519.SignatureSize {
+			continue
+		}
+		if ed25519.Verify(key, fp, sig) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // Parses a narinfo from r. Returns error on malformed input or missing StorePath.
