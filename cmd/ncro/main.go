@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/hex"
 	"flag"
 	"log/slog"
 	"net/http"
@@ -72,6 +74,9 @@ func main() {
 				if err := db.ExpireOldRoutes(); err != nil {
 					slog.Warn("expire routes error", "error", err)
 				}
+				if count, err := db.RouteCount(); err == nil {
+					metrics.RouteEntries.Set(float64(count))
+				}
 			}
 		}
 	}()
@@ -85,6 +90,17 @@ func main() {
 	probeDone := make(chan struct{})
 	go p.RunProbeLoop(30*time.Second, probeDone)
 
+	r := router.New(db, p, cfg.Cache.TTL.Duration, 5*time.Second)
+	for _, u := range cfg.Upstreams {
+		if u.PublicKey != "" {
+			if err := r.SetUpstreamKey(u.URL, u.PublicKey); err != nil {
+				slog.Error("invalid upstream public key", "url", u.URL, "error", err)
+				os.Exit(1)
+			}
+			slog.Info("narinfo signature verification enabled", "upstream", u.URL)
+		}
+	}
+
 	var gossipDone chan struct{}
 	if cfg.Mesh.Enabled {
 		store := mesh.NewRouteStore()
@@ -93,16 +109,32 @@ func main() {
 			slog.Error("failed to create mesh node", "error", err)
 			os.Exit(1)
 		}
-		if err := mesh.ListenAndServe(cfg.Mesh.BindAddr, store); err != nil {
+		slog.Info("mesh node identity", "node_id", node.ID(),
+			"public_key", hex.EncodeToString(node.PublicKey()))
+
+		allowedKeys := make([]ed25519.PublicKey, 0, len(cfg.Mesh.Peers))
+		for _, peer := range cfg.Mesh.Peers {
+			if peer.PublicKey != "" {
+				b, _ := hex.DecodeString(peer.PublicKey)
+				allowedKeys = append(allowedKeys, ed25519.PublicKey(b))
+			}
+		}
+
+		if err := mesh.ListenAndServe(cfg.Mesh.BindAddr, store, allowedKeys...); err != nil {
 			slog.Error("failed to start mesh listener", "addr", cfg.Mesh.BindAddr, "error", err)
 			os.Exit(1)
 		}
+
+		peerAddrs := make([]string, len(cfg.Mesh.Peers))
+		for i, p := range cfg.Mesh.Peers {
+			peerAddrs[i] = p.Addr
+		}
+
 		gossipDone = make(chan struct{})
-		go mesh.RunGossipLoop(node, db, cfg.Mesh.Peers, cfg.Mesh.GossipInterval.Duration, gossipDone)
-		slog.Info("mesh enabled", "node_id", node.ID(), "addr", cfg.Mesh.BindAddr, "peers", len(cfg.Mesh.Peers))
+		go mesh.RunGossipLoop(node, db, peerAddrs, cfg.Mesh.GossipInterval.Duration, gossipDone)
+		slog.Info("mesh enabled", "addr", cfg.Mesh.BindAddr, "peers", len(cfg.Mesh.Peers))
 	}
 
-	r := router.New(db, p, cfg.Cache.TTL.Duration, 5*time.Second)
 	srv := &http.Server{
 		Addr:         cfg.Server.Listen,
 		Handler:      server.New(r, p, cfg.Upstreams),
