@@ -431,6 +431,26 @@ func TestHealthEndpointDegraded(t *testing.T) {
 	if len(resp.Upstreams) != 2 {
 		t.Errorf("upstreams = %d, want 2", len(resp.Upstreams))
 	}
+
+	var foundDegraded bool
+	for _, u := range resp.Upstreams {
+		if u.URL == "https://up2.example.com" && u.Status == "DEGRADED" {
+			foundDegraded = true
+		}
+	}
+	if !foundDegraded {
+		t.Error("expected up2 to have status DEGRADED")
+	}
+
+	var foundActive bool
+	for _, u := range resp.Upstreams {
+		if u.URL == "https://up1.example.com" && u.Status == "ACTIVE" {
+			foundActive = true
+		}
+	}
+	if !foundActive {
+		t.Error("expected up1 to have status ACTIVE")
+	}
 }
 
 func TestHealthEndpointAllDown(t *testing.T) {

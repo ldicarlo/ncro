@@ -84,7 +84,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	for i, h := range sorted {
 		upstreams[i] = upstreamStatus{
 			URL:              h.URL,
-			Status:           strings.ToLower(h.Status.String()),
+			Status:           h.Status.String(),
 			LatencyMs:        h.EMALatency,
 			ConsecutiveFails: h.ConsecutiveFails,
 		}
