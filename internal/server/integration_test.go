@@ -75,7 +75,7 @@ func TestUpstreamFailoverFallback(t *testing.T) {
 	defer db.Close()
 
 	p := prober.New(0.3)
-	p.RecordLatency(bad.URL, 1)   // bad appears fastest
+	p.RecordLatency(bad.URL, 1) // bad appears fastest
 	p.RecordLatency(good.URL, 50)
 
 	r := router.New(db, p, time.Hour, 5*time.Second)

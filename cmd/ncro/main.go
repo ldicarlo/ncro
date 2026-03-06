@@ -85,14 +85,21 @@ func main() {
 	probeDone := make(chan struct{})
 	go p.RunProbeLoop(30*time.Second, probeDone)
 
+	var gossipDone chan struct{}
 	if cfg.Mesh.Enabled {
-		node, err := mesh.NewNode(cfg.Mesh.PrivateKeyPath, nil)
+		store := mesh.NewRouteStore()
+		node, err := mesh.NewNode(cfg.Mesh.PrivateKeyPath, store)
 		if err != nil {
 			slog.Error("failed to create mesh node", "error", err)
 			os.Exit(1)
 		}
-		slog.Info("mesh enabled", "node_id", node.ID(), "peers", len(cfg.Mesh.Peers))
-		slog.Warn("mesh gossip not yet implemented")
+		if err := mesh.ListenAndServe(cfg.Mesh.BindAddr, store); err != nil {
+			slog.Error("failed to start mesh listener", "addr", cfg.Mesh.BindAddr, "error", err)
+			os.Exit(1)
+		}
+		gossipDone = make(chan struct{})
+		go mesh.RunGossipLoop(node, db, cfg.Mesh.Peers, cfg.Mesh.GossipInterval.Duration, gossipDone)
+		slog.Info("mesh enabled", "node_id", node.ID(), "addr", cfg.Mesh.BindAddr, "peers", len(cfg.Mesh.Peers))
 	}
 
 	r := router.New(db, p, cfg.Cache.TTL.Duration, 5*time.Second)
@@ -119,6 +126,9 @@ func main() {
 
 	close(expireDone)
 	close(probeDone)
+	if gossipDone != nil {
+		close(gossipDone)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

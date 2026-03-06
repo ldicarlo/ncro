@@ -144,6 +144,33 @@ func (d *DB) ExpireOldRoutes() error {
 	return err
 }
 
+// Returns up to n non-expired routes ordered by most-recently-verified.
+func (d *DB) ListRecentRoutes(n int) ([]RouteEntry, error) {
+	rows, err := d.db.Query(`
+		SELECT store_path, upstream_url, latency_ema, last_verified, ttl, nar_hash, nar_size
+		FROM routes WHERE ttl > ? ORDER BY last_verified DESC LIMIT ?`,
+		time.Now().Unix(), n)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []RouteEntry
+	for rows.Next() {
+		var e RouteEntry
+		var lastVerifiedUnix, ttlUnix int64
+		if err := rows.Scan(
+			&e.StorePath, &e.UpstreamURL, &e.LatencyEMA,
+			&lastVerifiedUnix, &ttlUnix, &e.NarHash, &e.NarSize,
+		); err != nil {
+			return nil, err
+		}
+		e.LastVerified = time.Unix(lastVerifiedUnix, 0).UTC()
+		e.TTL = time.Unix(ttlUnix, 0).UTC()
+		result = append(result, e)
+	}
+	return result, rows.Err()
+}
+
 // Returns the total number of stored routes.
 func (d *DB) RouteCount() (int, error) {
 	var count int
