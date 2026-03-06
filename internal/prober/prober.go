@@ -1,10 +1,13 @@
 package prober
 
 import (
+	"math"
 	"net/http"
 	"sort"
 	"sync"
 	"time"
+
+	"notashelf.dev/ncro/internal/config"
 )
 
 // Upstream health status.
@@ -30,6 +33,7 @@ func (s Status) String() string {
 // In-memory metrics for one upstream.
 type UpstreamHealth struct {
 	URL              string
+	Priority         int
 	EMALatency       float64
 	LastProbe        time.Time
 	ConsecutiveFails uint32
@@ -56,13 +60,13 @@ func New(alpha float64) *Prober {
 	}
 }
 
-// Seeds the prober with upstream URLs (no measurements yet).
-func (p *Prober) InitUpstreams(urls []string) {
+// Seeds the prober with upstream configs (records priority, no measurements yet).
+func (p *Prober) InitUpstreams(upstreams []config.UpstreamConfig) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for _, u := range urls {
-		if _, ok := p.table[u]; !ok {
-			p.table[u] = &UpstreamHealth{URL: u, Status: StatusActive}
+	for _, u := range upstreams {
+		if _, ok := p.table[u.URL]; !ok {
+			p.table[u.URL] = &UpstreamHealth{URL: u.URL, Priority: u.Priority, Status: StatusActive}
 		}
 	}
 }
@@ -109,7 +113,8 @@ func (p *Prober) GetHealth(url string) *UpstreamHealth {
 	return &cp
 }
 
-// Returns all known upstreams sorted by EMA latency (ascending). DOWN upstreams last.
+// Returns all known upstreams sorted by EMA latency ascending.
+// DOWN upstreams are sorted last. Within 10% EMA difference, lower Priority wins.
 func (p *Prober) SortedByLatency() []*UpstreamHealth {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -119,13 +124,17 @@ func (p *Prober) SortedByLatency() []*UpstreamHealth {
 		result = append(result, &cp)
 	}
 	sort.Slice(result, func(i, j int) bool {
-		if result[i].Status == StatusDown && result[j].Status != StatusDown {
-			return false
+		a, b := result[i], result[j]
+		aDown := a.Status == StatusDown
+		bDown := b.Status == StatusDown
+		if aDown != bDown {
+			return bDown // non-down first
 		}
-		if result[j].Status == StatusDown && result[i].Status != StatusDown {
-			return true
+		// Within 10% latency difference: prefer lower priority number.
+		if b.EMALatency > 0 && math.Abs(a.EMALatency-b.EMALatency)/b.EMALatency < 0.10 {
+			return a.Priority < b.Priority
 		}
-		return result[i].EMALatency < result[j].EMALatency
+		return a.EMALatency < b.EMALatency
 	})
 	return result
 }
