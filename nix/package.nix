@@ -2,9 +2,9 @@
   lib,
   buildGoModule,
 }:
-buildGoModule {
+buildGoModule (finalAttrs: {
   pname = "ncro";
-  version = "0.1.0";
+  version = "1.0.0";
 
   src = let
     fs = lib.fileset;
@@ -22,5 +22,5 @@ buildGoModule {
 
   vendorHash = "sha256-vhCOK0cD92F9xMBS4APH+0nvLftaPuRl2LJio4mYWhY=";
 
-  ldflags = ["-s" "-w"];
-}
+  ldflags = ["-s" "-w" "-X main.version=${finalAttrs.version}"];
+})
