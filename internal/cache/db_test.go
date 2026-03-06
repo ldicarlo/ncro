@@ -129,6 +129,57 @@ func TestExpireOldRoutes(t *testing.T) {
 	}
 }
 
+func TestRouteEntryIsValidExpired(t *testing.T) {
+	expired := &cache.RouteEntry{TTL: time.Now().Add(-time.Minute)}
+	if expired.IsValid() {
+		t.Error("expired entry should not be valid")
+	}
+}
+
+func TestRouteEntryIsValidFuture(t *testing.T) {
+	valid := &cache.RouteEntry{TTL: time.Now().Add(time.Hour)}
+	if !valid.IsValid() {
+		t.Error("future-TTL entry should be valid")
+	}
+}
+
+func TestDBOpenCreatesSchema(t *testing.T) {
+	db := newTestDB(t)
+	// RouteCount works only if schema was created.
+	count, err := db.RouteCount()
+	if err != nil {
+		t.Fatalf("RouteCount after fresh open: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected 0 routes in fresh DB, got %d", count)
+	}
+}
+
+func TestRouteCountAfterExpiry(t *testing.T) {
+	db := newTestDB(t)
+
+	for i := range 3 {
+		ttl := time.Now().Add(-time.Minute) // all expired
+		db.SetRoute(&cache.RouteEntry{
+			StorePath:   "pkg-" + string(rune('a'+i)),
+			UpstreamURL: "https://cache.nixos.org",
+			TTL:         ttl,
+		})
+	}
+
+	before, _ := db.RouteCount()
+	if err := db.ExpireOldRoutes(); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := db.RouteCount()
+	if after >= before {
+		t.Errorf("count did not decrease after expiry: before=%d after=%d", before, after)
+	}
+	if after != 0 {
+		t.Errorf("expected 0 routes after expiring all, got %d", after)
+	}
+}
+
 func TestLRUEviction(t *testing.T) {
 	// Use maxEntries=3 to trigger eviction easily
 	f, _ := os.CreateTemp("", "ncro-lru-*.db")

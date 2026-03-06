@@ -1,6 +1,7 @@
 package router_test
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -87,6 +88,41 @@ func TestRouteAllFail(t *testing.T) {
 	}
 }
 
+func TestRouteAllNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+
+	r, cleanup := newTestRouter(t, srv.URL)
+	defer cleanup()
+
+	_, err := r.Resolve("somehash", []string{srv.URL})
+	if !errors.Is(err, router.ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestRouteAllUnavailable(t *testing.T) {
+	r, cleanup := newTestRouter(t)
+	defer cleanup()
+
+	_, err := r.Resolve("somehash", []string{"http://127.0.0.1:1"})
+	if !errors.Is(err, router.ErrUpstreamUnavailable) {
+		t.Errorf("expected ErrUpstreamUnavailable, got %v", err)
+	}
+}
+
+func TestRaceWithMalformedURL(t *testing.T) {
+	r, cleanup := newTestRouter(t)
+	defer cleanup()
+
+	_, err := r.Resolve("somehash", []string{"://bad-url"})
+	if err == nil {
+		t.Error("expected error for malformed upstream URL")
+	}
+}
+
 func TestCacheHit(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
@@ -104,5 +140,36 @@ func TestCacheHit(t *testing.T) {
 	}
 	if !result.CacheHit {
 		t.Error("expected cache hit on second resolve")
+	}
+}
+
+func TestResolveWithDownUpstream(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	f, _ := os.CreateTemp("", "ncro-router-*.db")
+	f.Close()
+	db, _ := cache.Open(f.Name(), 1000)
+	defer db.Close()
+	defer os.Remove(f.Name())
+
+	p := prober.New(0.3)
+	p.RecordLatency(srv.URL, 10)
+	// Force the upstream to StatusDown
+	for range 10 {
+		p.RecordFailure(srv.URL)
+	}
+
+	r := router.New(db, p, time.Hour, 5*time.Second)
+	// Router should still attempt the race (the race uses HEAD, not the prober status)
+	// The upstream is actually healthy (httptest), so the race should succeed.
+	result, err := r.Resolve("somehash", []string{srv.URL})
+	if err != nil {
+		t.Fatalf("Resolve with down-flagged upstream: %v", err)
+	}
+	if result.URL != srv.URL {
+		t.Errorf("url = %q", result.URL)
 	}
 }
