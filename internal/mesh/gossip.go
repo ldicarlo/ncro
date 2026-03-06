@@ -1,7 +1,9 @@
 package mesh
 
 import (
-	"encoding/binary"
+	"bytes"
+	"crypto/ed25519"
+	"fmt"
 	"log/slog"
 	"net"
 	"time"
@@ -10,41 +12,42 @@ import (
 	"notashelf.dev/ncro/internal/cache"
 )
 
-const maxPacketSize = 65536 // UDP max payload
+const (
+	maxPacketSize = 65536                                 // UDP max payload
+	headerSize    = ed25519.PublicKeySize + ed25519.SignatureSize // 32 + 64 = 96
+)
 
-// Wire format: [2-byte sig length][sig bytes][msgpack body]
+// Wire format: [32-byte sender pubkey][64-byte ed25519 sig][msgpack body]
+
 func encodePacket(node *Node, msg Message) ([]byte, error) {
 	body, sig, err := node.Sign(msg)
 	if err != nil {
 		return nil, err
 	}
-	pkt := make([]byte, 2+len(sig)+len(body))
-	binary.BigEndian.PutUint16(pkt[:2], uint16(len(sig)))
-	copy(pkt[2:], sig)
-	copy(pkt[2+len(sig):], body)
+	pkt := make([]byte, headerSize+len(body))
+	copy(pkt[:ed25519.PublicKeySize], node.PublicKey())
+	copy(pkt[ed25519.PublicKeySize:headerSize], sig)
+	copy(pkt[headerSize:], body)
 	return pkt, nil
 }
 
-func decodePacket(pkt []byte) (Message, []byte, []byte, bool) {
-	if len(pkt) < 2 {
-		return Message{}, nil, nil, false
+func decodePacket(pkt []byte) (pubKey ed25519.PublicKey, sig, body []byte, msg Message, err error) {
+	if len(pkt) < headerSize {
+		return nil, nil, nil, Message{}, fmt.Errorf("packet too short: %d bytes", len(pkt))
 	}
-	sigLen := int(binary.BigEndian.Uint16(pkt[:2]))
-	if len(pkt) < 2+sigLen {
-		return Message{}, nil, nil, false
-	}
-	sig := pkt[2 : 2+sigLen]
-	body := pkt[2+sigLen:]
-	var msg Message
+	pubKey = ed25519.PublicKey(pkt[:ed25519.PublicKeySize])
+	sig = pkt[ed25519.PublicKeySize:headerSize]
+	body = pkt[headerSize:]
 	if err := msgpack.Unmarshal(body, &msg); err != nil {
-		return Message{}, nil, nil, false
+		return nil, nil, nil, Message{}, fmt.Errorf("unmarshal: %w", err)
 	}
-	return msg, body, sig, true
+	return pubKey, sig, body, msg, nil
 }
 
-// Starts a UDP listener at addr. Received route announcements are merged into store.
-// Blocks until the conn is closed; call in a goroutine.
-func ListenAndServe(addr string, store *RouteStore) error {
+// Starts a UDP listener at addr. All messages are signature-verified.
+// When allowedKeys is non-empty, messages from unlisted senders are dropped.
+// Pass no keys (or an empty list) to accept messages from any sender.
+func ListenAndServe(addr string, store *RouteStore, allowedKeys ...ed25519.PublicKey) error {
 	conn, err := net.ListenPacket("udp", addr)
 	if err != nil {
 		return err
@@ -57,9 +60,26 @@ func ListenAndServe(addr string, store *RouteStore) error {
 			if err != nil {
 				return
 			}
-			msg, _, _, ok := decodePacket(buf[:n])
-			if !ok {
-				slog.Warn("mesh: malformed packet", "src", src)
+			pubKey, sig, body, msg, err := decodePacket(buf[:n])
+			if err != nil {
+				slog.Warn("mesh: malformed packet", "src", src, "error", err)
+				continue
+			}
+			if len(allowedKeys) > 0 {
+				allowed := false
+				for _, k := range allowedKeys {
+					if bytes.Equal(k, pubKey) {
+						allowed = true
+						break
+					}
+				}
+				if !allowed {
+					slog.Warn("mesh: rejecting packet from unknown sender", "src", src)
+					continue
+				}
+			}
+			if err := Verify(pubKey, body, sig); err != nil {
+				slog.Warn("mesh: signature verification failed", "src", src, "error", err)
 				continue
 			}
 			if msg.Type == MsgAnnounce && len(msg.Routes) > 0 {
