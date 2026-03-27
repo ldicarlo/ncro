@@ -232,3 +232,24 @@ func (p *Prober) getOrCreate(url string) *UpstreamHealth {
 	}
 	return h
 }
+
+// Adds a new upstream dynamically (e.g., discovered via mDNS).
+// Thread-safe. Logs the addition and begins probing.
+func (p *Prober) AddUpstream(url string, priority int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, exists := p.table[url]; exists {
+		return
+	}
+	p.table[url] = &UpstreamHealth{URL: url, Priority: priority, Status: StatusActive}
+	// Trigger an immediate probe in background
+	go p.ProbeUpstream(url)
+}
+
+// Removes an upstream from tracking (e.g., when a peer leaves the network).
+// Thread-safe. No-op if upstream was not known.
+func (p *Prober) RemoveUpstream(url string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.table, url)
+}

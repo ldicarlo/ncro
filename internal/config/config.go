@@ -71,6 +71,15 @@ type MeshConfig struct {
 	GossipInterval Duration     `yaml:"gossip_interval"`
 }
 
+// Controls mDNS/DNS-SD based dynamic upstream discovery.
+type DiscoveryConfig struct {
+	Enabled       bool     `yaml:"enabled"`
+	ServiceName   string   `yaml:"service_name"`
+	Domain        string   `yaml:"domain"`
+	DiscoveryTime Duration `yaml:"discovery_time"`
+	Priority      int      `yaml:"priority"`
+}
+
 type LoggingConfig struct {
 	Level  string `yaml:"level"`
 	Format string `yaml:"format"`
@@ -81,6 +90,7 @@ type Config struct {
 	Upstreams []UpstreamConfig `yaml:"upstreams"`
 	Cache     CacheConfig      `yaml:"cache"`
 	Mesh      MeshConfig       `yaml:"mesh"`
+	Discovery DiscoveryConfig  `yaml:"discovery"`
 	Logging   LoggingConfig    `yaml:"logging"`
 }
 
@@ -105,6 +115,12 @@ func defaults() Config {
 		Mesh: MeshConfig{
 			BindAddr:       "0.0.0.0:7946",
 			GossipInterval: Duration{30 * time.Second},
+		},
+		Discovery: DiscoveryConfig{
+			ServiceName:   "_nix-serve._tcp",
+			Domain:        "local",
+			DiscoveryTime: Duration{5 * time.Second},
+			Priority:      20,
 		},
 		Logging: LoggingConfig{
 			Level:  "info",
@@ -159,6 +175,17 @@ func (c *Config) Validate() error {
 			if err != nil || len(b) != 32 {
 				return fmt.Errorf("mesh.peers[%d]: public_key must be a hex-encoded 32-byte ed25519 key", i)
 			}
+		}
+	}
+	if c.Discovery.Enabled {
+		if c.Discovery.ServiceName == "" {
+			return fmt.Errorf("discovery.service_name is required when discovery is enabled")
+		}
+		if c.Discovery.Domain == "" {
+			return fmt.Errorf("discovery.domain is required when discovery is enabled")
+		}
+		if c.Discovery.DiscoveryTime.Duration <= 0 {
+			return fmt.Errorf("discovery.discovery_time must be positive")
 		}
 	}
 	return nil
