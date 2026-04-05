@@ -197,16 +197,18 @@ func runServer(_ *cobra.Command, _ []string) error {
 
 	// Start mDNS discovery in background
 	discoveryDone := make(chan struct{})
+	var discoveryCancel context.CancelFunc
 	if discoveryMgr != nil {
+		var ctx context.Context
+		ctx, discoveryCancel = context.WithCancel(context.Background())
 		go func() {
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
 			if err := discoveryMgr.Start(ctx); err != nil {
 				slog.Error("discovery error", "error", err)
 			}
 		}()
 		go func() {
 			<-discoveryDone
+			discoveryCancel()
 			discoveryMgr.Stop()
 		}()
 	}
