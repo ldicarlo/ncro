@@ -12,6 +12,7 @@ import (
 
 func TestEMACalculation(t *testing.T) {
 	p := prober.New(0.3)
+	p.AddUpstream("https://example.com", 1)
 	p.RecordLatency("https://example.com", 100)
 	p.RecordLatency("https://example.com", 50)
 
@@ -27,6 +28,7 @@ func TestEMACalculation(t *testing.T) {
 
 func TestStatusProgression(t *testing.T) {
 	p := prober.New(0.3)
+	p.AddUpstream("https://example.com", 1)
 	p.RecordLatency("https://example.com", 10)
 
 	for range 3 {
@@ -48,6 +50,7 @@ func TestStatusProgression(t *testing.T) {
 
 func TestRecoveryAfterSuccess(t *testing.T) {
 	p := prober.New(0.3)
+	p.AddUpstream("https://example.com", 1)
 	for range 10 {
 		p.RecordFailure("https://example.com")
 	}
@@ -63,6 +66,9 @@ func TestRecoveryAfterSuccess(t *testing.T) {
 
 func TestSortedByLatency(t *testing.T) {
 	p := prober.New(0.3)
+	p.AddUpstream("https://slow.example.com", 1)
+	p.AddUpstream("https://fast.example.com", 1)
+	p.AddUpstream("https://medium.example.com", 1)
 	p.RecordLatency("https://slow.example.com", 200)
 	p.RecordLatency("https://fast.example.com", 10)
 	p.RecordLatency("https://medium.example.com", 50)
@@ -83,6 +89,7 @@ func TestProbeUpstream(t *testing.T) {
 	defer srv.Close()
 
 	p := prober.New(0.3)
+	p.AddUpstream(srv.URL, 0)
 	p.ProbeUpstream(srv.URL)
 
 	h := p.GetHealth(srv.URL)
@@ -94,6 +101,8 @@ func TestProbeUpstream(t *testing.T) {
 func TestSortedByLatencyWithPriority(t *testing.T) {
 	p := prober.New(0.3)
 	// Two upstreams with very similar latency; lower priority number should win.
+	p.AddUpstream("https://low-priority.example.com", 1)
+	p.AddUpstream("https://high-priority.example.com", 1)
 	p.RecordLatency("https://low-priority.example.com", 100)
 	p.RecordLatency("https://high-priority.example.com", 102) // within 10%
 
@@ -115,6 +124,7 @@ func TestSortedByLatencyWithPriority(t *testing.T) {
 
 func TestProbeUpstreamFailure(t *testing.T) {
 	p := prober.New(0.3)
+	p.AddUpstream("http://127.0.0.1:1", 0)
 	p.ProbeUpstream("http://127.0.0.1:1") // nothing listening, maybe except for Makima
 
 	h := p.GetHealth("http://127.0.0.1:1")
