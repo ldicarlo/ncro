@@ -56,7 +56,7 @@ in {
       wantedBy = ["multi-user.target"];
       after = ["network.target"];
       serviceConfig = {
-        ExecStart = "${lib.getExe cfg.package} -config ${configFile}";
+        ExecStart = "${lib.getExe cfg.package} --config ${configFile}";
         DynamicUser = true;
         StateDirectory = "ncro";
         Restart = "on-failure";
