@@ -33,6 +33,7 @@ func makeTestServer(t *testing.T, upstreams ...string) *httptest.Server {
 
 	p := prober.New(0.3)
 	for _, u := range upstreams {
+		p.AddUpstream(u, 0)
 		p.RecordLatency(u, 10)
 	}
 
@@ -363,6 +364,8 @@ func TestNARFallbackWhenFirstUpstreamMissing(t *testing.T) {
 
 	p := prober.New(0.3)
 	// missing appears faster
+	p.AddUpstream(missing.URL, 0)
+	p.AddUpstream(hasIt.URL, 0)
 	p.RecordLatency(missing.URL, 1)
 	p.RecordLatency(hasIt.URL, 50)
 

@@ -37,6 +37,7 @@ func TestRouteReuseOnSecondRequest(t *testing.T) {
 	defer db.Close()
 
 	p := prober.New(0.3)
+	p.AddUpstream(upstream.URL, 0)
 	p.RecordLatency(upstream.URL, 10)
 	r := router.New(db, p, time.Hour, 5*time.Second, 10*time.Minute)
 	ts := httptest.NewServer(server.New(r, p, db, []config.UpstreamConfig{{URL: upstream.URL}}, 30))
@@ -75,6 +76,8 @@ func TestUpstreamFailoverFallback(t *testing.T) {
 	defer db.Close()
 
 	p := prober.New(0.3)
+	p.AddUpstream(bad.URL, 0)
+	p.AddUpstream(good.URL, 0)
 	p.RecordLatency(bad.URL, 1) // bad appears fastest
 	p.RecordLatency(good.URL, 50)
 
