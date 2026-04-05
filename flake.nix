@@ -25,5 +25,12 @@
     };
 
     hydraJobs = self.packages;
+
+    checks = forEachSystem (system: {
+      p2p-discovery = import ./nix/tests/p2p.nix {
+        pkgs = pkgsForEach.${system};
+        inherit self;
+      };
+    });
   };
 }
