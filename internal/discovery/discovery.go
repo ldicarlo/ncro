@@ -10,13 +10,11 @@ import (
 
 	"github.com/grandcat/zeroconf"
 	"notashelf.dev/ncro/internal/config"
-	"notashelf.dev/ncro/internal/prober"
 )
 
 // Tracks discovered nix-serve instances and maintains the upstream list.
 type Discovery struct {
 	cfg              config.DiscoveryConfig
-	prober           *prober.Prober
 	resolver         *zeroconf.Resolver
 	discovered       map[string]*discoveredPeer
 	mu               sync.RWMutex
@@ -33,7 +31,7 @@ type discoveredPeer struct {
 }
 
 // Creates a new Discovery manager.
-func New(cfg config.DiscoveryConfig, p *prober.Prober) (*Discovery, error) {
+func New(cfg config.DiscoveryConfig) (*Discovery, error) {
 	resolver, err := zeroconf.NewResolver(nil)
 	if err != nil {
 		return nil, fmt.Errorf("create zeroconf resolver: %w", err)
@@ -41,7 +39,6 @@ func New(cfg config.DiscoveryConfig, p *prober.Prober) (*Discovery, error) {
 
 	return &Discovery{
 		cfg:        cfg,
-		prober:     p,
 		resolver:   resolver,
 		discovered: make(map[string]*discoveredPeer),
 		stopCh:     make(chan struct{}),
@@ -187,7 +184,7 @@ func (d *Discovery) cleanupPeers() {
 	// Use 3x TTL as the expiration window.
 	expiration := d.cfg.DiscoveryTime.Duration * 3
 	if expiration == 0 {
-		expiration = time.Second
+		expiration = 30 * time.Second
 	}
 
 	for key, peer := range d.discovered {

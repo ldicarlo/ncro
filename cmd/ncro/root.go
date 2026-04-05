@@ -136,7 +136,7 @@ func runServer(_ *cobra.Command, _ []string) error {
 	// Setup mDNS discovery if enabled
 	var discoveryMgr *discovery.Discovery
 	if cfg.Discovery.Enabled {
-		discoveryMgr, err = discovery.New(cfg.Discovery, p)
+		discoveryMgr, err = discovery.New(cfg.Discovery)
 		if err != nil {
 			return fmt.Errorf("create discovery manager: %w", err)
 		}
