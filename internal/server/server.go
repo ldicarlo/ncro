@@ -227,9 +227,24 @@ func (s *Server) copyResponse(w http.ResponseWriter, resp *http.Response) {
 }
 
 func (s *Server) upstreamURLs() []string {
-	urls := make([]string, len(s.upstreams))
-	for i, u := range s.upstreams {
-		urls[i] = u.URL
+	// Include all upstreams the prober knows about: this covers both the
+	// statically-configured upstreams and any peers discovered at runtime
+	// via mDNS.  Using the prober as the source of truth avoids a split
+	// between "what was configured" and "what was discovered".
+	sorted := s.prober.SortedByLatency()
+	urls := make([]string, 0, len(sorted))
+	for _, h := range sorted {
+		if h.Status != prober.StatusDown {
+			urls = append(urls, h.URL)
+		}
+	}
+	// Fall back to the static list if the prober has no entries yet (i.e.,
+	// before the first probe interval completes).
+	if len(urls) == 0 {
+		urls = make([]string, len(s.upstreams))
+		for i, u := range s.upstreams {
+			urls[i] = u.URL
+		}
 	}
 	return urls
 }
