@@ -20,7 +20,11 @@ buildGoModule (finalAttrs: {
       ];
     };
 
-  vendorHash = "sha256-vhCOK0cD92F9xMBS4APH+0nvLftaPuRl2LJio4mYWhY=";
-
+  vendorHash = "sha256-9OkQIj2g5mZ+IpjIKvy8Il7J4xL4PJimEsXJP10FhmU=";
   ldflags = ["-s" "-w" "-X main.version=${finalAttrs.version}"];
+
+  meta = {
+    mainProgram = "ncro";
+    maintainers = with lib.maintainers; [NotAShelf];
+  };
 })
