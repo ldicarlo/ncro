@@ -150,10 +150,3 @@ func (rs *RouteStore) Top(n int) []cache.RouteEntry {
 	}
 	return result
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

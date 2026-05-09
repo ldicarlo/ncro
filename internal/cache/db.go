@@ -248,12 +248,12 @@ func (d *DB) SetNegative(storePath string, ttl time.Duration) error {
 
 // Returns true if a non-expired negative entry exists for storePath.
 func (d *DB) IsNegative(storePath string) (bool, error) {
-	var count int
+	var exists bool
 	err := d.db.QueryRow(
-		`SELECT COUNT(*) FROM negative_cache WHERE store_path = ? AND expires_at > ?`,
+		`SELECT EXISTS(SELECT 1 FROM negative_cache WHERE store_path = ? AND expires_at > ?)`,
 		storePath, time.Now().Unix(),
-	).Scan(&count)
-	return count > 0, err
+	).Scan(&exists)
+	return exists, err
 }
 
 // Deletes expired negative cache entries.
@@ -304,17 +304,10 @@ func (d *DB) LoadAllHealth() ([]HealthRow, error) {
 
 // Deletes the oldest routes (by last_verified) when over capacity.
 func (d *DB) evictIfNeeded() error {
-	count, err := d.RouteCount()
-	if err != nil {
-		return err
-	}
-	if count <= d.maxEntries {
-		return nil
-	}
-	excess := count - d.maxEntries
-	_, err = d.db.Exec(`
+	_, err := d.db.Exec(`
 		DELETE FROM routes WHERE store_path IN (
-			SELECT store_path FROM routes ORDER BY last_verified ASC LIMIT ?
-		)`, excess)
+			SELECT store_path FROM routes ORDER BY last_verified ASC
+			LIMIT MAX(0, (SELECT COUNT(*) FROM routes) - ?)
+		)`, d.maxEntries)
 	return err
 }

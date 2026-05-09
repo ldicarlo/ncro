@@ -152,7 +152,7 @@ func (r *Router) race(storeHash string, candidates []string) (*Result, error) {
 				return
 			}
 			resp.Body.Close()
-			if resp.StatusCode != 200 {
+			if resp.StatusCode != http.StatusOK {
 				mu.Lock()
 				notFounds++
 				mu.Unlock()
@@ -229,7 +229,7 @@ func (r *Router) fetchNarInfo(upstream, storeHash string) ([]byte, string, strin
 		return nil, "", "", 0
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, "", "", 0
 	}
 	body, err := io.ReadAll(resp.Body)

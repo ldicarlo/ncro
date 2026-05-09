@@ -141,12 +141,7 @@ func (p *Prober) RecordFailure(url string) {
 		return
 	}
 	h.ConsecutiveFails++
-	switch {
-	case h.ConsecutiveFails >= 10:
-		h.Status = StatusDown
-	case h.ConsecutiveFails >= 3:
-		h.Status = StatusDegraded
-	}
+	h.Status = computeStatus(h.ConsecutiveFails)
 	if p.persistHealth != nil {
 		u, ema, cf, tq := h.URL, h.EMALatency, h.ConsecutiveFails, h.TotalQueries
 		fn := p.persistHealth
@@ -199,9 +194,9 @@ func (p *Prober) ProbeUpstream(url string) {
 	// Skip if URL is not in table. This prevents in-flight probes from
 	// resurrecting removed upstreams (race: RemoveUpstream called while
 	// ProbeUpstream is in flight).
-	p.mu.Lock()
+	p.mu.RLock()
 	_, exists := p.table[url]
-	p.mu.Unlock()
+	p.mu.RUnlock()
 	if !exists {
 		// URL was removed or never added; do not resurrect.
 		return

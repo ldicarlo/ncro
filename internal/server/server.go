@@ -20,23 +20,25 @@ import (
 
 // HTTP handler implementing the Nix binary cache protocol.
 type Server struct {
-	router        *router.Router
-	prober        *prober.Prober
-	db            *cache.DB
-	upstreams     []config.UpstreamConfig
-	client        *http.Client
-	cachePriority int
+	router         *router.Router
+	prober         *prober.Prober
+	db             *cache.DB
+	upstreams      []config.UpstreamConfig
+	client         *http.Client
+	cachePriority  int
+	metricsHandler http.Handler
 }
 
 // Creates a Server.
 func New(r *router.Router, p *prober.Prober, db *cache.DB, upstreams []config.UpstreamConfig, cachePriority int) *Server {
 	return &Server{
-		router:        r,
-		prober:        p,
-		db:            db,
-		upstreams:     upstreams,
-		client:        &http.Client{Timeout: 60 * time.Second},
-		cachePriority: cachePriority,
+		router:         r,
+		prober:         p,
+		db:             db,
+		upstreams:      upstreams,
+		client:         &http.Client{Timeout: 60 * time.Second},
+		cachePriority:  cachePriority,
+		metricsHandler: promhttp.Handler(),
 	}
 }
 
@@ -48,7 +50,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case path == "/health":
 		s.handleHealth(w, r)
 	case path == "/metrics":
-		promhttp.Handler().ServeHTTP(w, r)
+		s.metricsHandler.ServeHTTP(w, r)
 	case strings.HasSuffix(path, ".narinfo"):
 		s.handleNarinfo(w, r)
 	case strings.HasPrefix(path, "/nar/"):

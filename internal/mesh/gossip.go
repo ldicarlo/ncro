@@ -140,9 +140,11 @@ func RunGossipLoop(node *Node, src RouteSource, peers []string, interval time.Du
 				continue
 			}
 			for _, peer := range peers {
-				if err := Announce(peer, node, routes); err != nil {
-					slog.Warn("mesh: announce failed", "peer", peer, "error", err)
-				}
+				go func(p string) {
+					if err := Announce(p, node, routes); err != nil {
+						slog.Warn("mesh: announce failed", "peer", p, "error", err)
+					}
+				}(peer)
 			}
 			slog.Debug("mesh: announced routes to peers", "routes", len(routes), "peers", len(peers))
 		}
