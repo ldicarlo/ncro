@@ -1,10 +1,15 @@
 [package]
-name = "ncro-health"
+name              = "ncro-health"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish           = false
+
 
 [dependencies]
 ncro-config.workspace = true
-reqwest = { workspace = true, features = [ "rustls" ] }
-tokio = { workspace = true, features = [ "sync", "time", "rt" ] }
+reqwest               = { workspace = true, features = [ "rustls" ] }
+tokio                 = { workspace = true, features = [ "sync", "time", "rt" ] }
+
+[lints]
+workspace = true

@@ -1,0 +1,30 @@
+[package]
+name              = "ncro"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace   = true
+axum.workspace     = true
+clap               = { workspace = true, features = [ "derive", "env" ] }
+hex.workspace      = true
+tokio              = { workspace = true, features = [ "macros", "rt-multi-thread", "signal", "time", "net", "fs" ] }
+tracing.workspace  = true
+tracing-subscriber = { workspace = true, features = [ "env-filter", "json" ] }
+
+ncro-config.workspace    = true
+ncro-db.workspace        = true
+ncro-discovery.workspace = true
+ncro-health.workspace    = true
+ncro-mesh.workspace      = true
+ncro-metrics.workspace   = true
+ncro-router.workspace    = true
+ncro-server.workspace    = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tower              = { workspace = true, features = [ "util" ] }
+
+[lints]
+workspace = true

@@ -9,7 +9,7 @@ pub enum ConfigError {
   #[error("read config: {0}")]
   Read(#[from] std::io::Error),
   #[error("parse config: {0}")]
-  Parse(#[from] serde_yaml::Error),
+  Parse(#[from] toml::de::Error),
   #[error("{0}")]
   Validation(String),
 }
@@ -29,9 +29,9 @@ mod tests {
   }
 
   #[test]
-  fn parses_duration_yaml() -> Result<(), serde_yaml::Error> {
-    let cfg: Config = serde_yaml::from_str(
-      "server:\n  read_timeout: 30s\ncache:\n  ttl: 2h\n",
+  fn parses_duration_toml() -> Result<(), toml::de::Error> {
+    let cfg: Config = toml::from_str(
+      "[server]\nread_timeout = \"30s\"\n\n[cache]\nttl = \"2h\"\n",
     )?;
     assert_eq!(cfg.server.read_timeout.0, Duration::from_secs(30));
     assert_eq!(cfg.cache.ttl.0, Duration::from_secs(7200));
@@ -207,7 +207,7 @@ impl Config {
   pub fn load(path: Option<&str>) -> Result<Self, ConfigError> {
     let mut cfg = if let Some(path) = path.filter(|p| !p.is_empty()) {
       let data = fs::read_to_string(path)?;
-      serde_yaml::from_str::<Self>(&data)?
+      toml::from_str::<Self>(&data)?
     } else {
       Self::default()
     };

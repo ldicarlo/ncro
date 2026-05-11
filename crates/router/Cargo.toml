@@ -1,17 +1,21 @@
 [package]
-name = "ncro-router"
+name              = "ncro-router"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish           = false
 
 [dependencies]
-chrono.workspace = true
+chrono.workspace       = true
 futures-util.workspace = true
-ncro-db.workspace = true
-ncro-health.workspace = true
+ncro-db.workspace      = true
+ncro-health.workspace  = true
 ncro-metrics.workspace = true
 ncro-narinfo.workspace = true
-reqwest = { workspace = true, features = [ "rustls" ] }
-thiserror.workspace = true
-tokio = { workspace = true, features = [ "sync", "time", "rt" ] }
-tracing.workspace = true
+reqwest                = { workspace = true, features = [ "rustls" ] }
+thiserror.workspace    = true
+tokio                  = { workspace = true, features = [ "sync", "time", "rt" ] }
+tracing.workspace      = true
+
+[lints]
+workspace = true

@@ -7,10 +7,10 @@ self: {
   inherit (lib.modules) mkIf;
   inherit (lib.options) mkOption mkEnableOption mkPackageOption;
 
-  format = pkgs.formats.yaml {};
+  format = pkgs.formats.toml {};
 
   cfg = config.services.ncro;
-  configFile = format.generate "ncro.yaml" cfg.settings;
+  configFile = format.generate "ncro.toml" cfg.settings;
 in {
   options.services.ncro = {
     enable = mkEnableOption "ncro, the Nix cache route optimizer";
@@ -22,7 +22,7 @@ in {
       default = {};
       description = ''
         ncro configuration as an attribute set. Keys and structure match the
-        YAML config file format; all defaults are handled by the ncro binary.
+        TOML config file format; all defaults are handled by the ncro binary.
       '';
       example = {
         logging.level = "info";

@@ -1,17 +1,21 @@
 [package]
-name = "ncro-mesh"
+name              = "ncro-mesh"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish           = false
 
 [dependencies]
-chrono.workspace = true
-ed25519-dalek = { workspace = true, features = [ "rand_core" ] }
-hex.workspace = true
-ncro-db.workspace = true
-rand.workspace = true
+chrono.workspace    = true
+ed25519-dalek       = { workspace = true, features = [ "rand_core" ] }
+hex.workspace       = true
+ncro-db.workspace   = true
+rand.workspace      = true
 rmp-serde.workspace = true
-serde = { workspace = true, features = [ "derive" ] }
+serde               = { workspace = true, features = [ "derive" ] }
 thiserror.workspace = true
-tokio = { workspace = true, features = [ "fs", "net", "rt", "sync", "time" ] }
-tracing.workspace = true
+tokio               = { workspace = true, features = [ "fs", "net", "rt", "sync", "time" ] }
+tracing.workspace   = true
+
+[lints]
+workspace = true

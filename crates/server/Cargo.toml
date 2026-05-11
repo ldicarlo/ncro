@@ -1,18 +1,22 @@
 [package]
-name = "ncro-server"
+name              = "ncro-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+publish           = false
 
 [dependencies]
-axum = { workspace = true, features = [ "macros" ] }
-bytes.workspace = true
+axum                   = { workspace = true, features = [ "macros" ] }
+bytes.workspace        = true
 futures-util.workspace = true
-ncro-config.workspace = true
-ncro-db.workspace = true
-ncro-health.workspace = true
+ncro-config.workspace  = true
+ncro-db.workspace      = true
+ncro-health.workspace  = true
 ncro-metrics.workspace = true
-ncro-router.workspace = true
-reqwest = { workspace = true, features = [ "rustls", "stream" ] }
-serde = { workspace = true, features = [ "derive" ] }
-tracing.workspace = true
+ncro-router.workspace  = true
+reqwest                = { workspace = true, features = [ "rustls", "stream" ] }
+serde                  = { workspace = true, features = [ "derive" ] }
+tracing.workspace      = true
+
+[lints]
+workspace = true

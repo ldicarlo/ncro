@@ -55,7 +55,7 @@ measurements current and detect unhealthy upstreams.
 $ ncro
 
 # Point at a config file
-$ ncro -config /etc/ncro/config.yaml
+$ ncro --config /etc/ncro/config.toml
 
 # Tell Nix to use it
 $ nix-shell -p hello --substituters http://localhost:8080
@@ -63,36 +63,38 @@ $ nix-shell -p hello --substituters http://localhost:8080
 
 ## Configuration
 
-Default config is embedded; create a YAML file to override any field.
+Default config is embedded; create a TOML file to override any field.
 
-```yaml
-server:
-  listen: ":8080"
-  read_timeout: 30s
-  write_timeout: 30s
+```toml
+[server]
+listen = ":8080"
+read_timeout = "30s"
+write_timeout = "30s"
 
-upstreams:
-  - url: "https://cache.nixos.org"
-    priority: 10 # lower = preferred on latency ties (within 10%)
-  - url: "https://nix-community.cachix.org"
-    priority: 20
+[[upstreams]]
+url = "https://cache.nixos.org"
+priority = 10 # lower = preferred on latency ties (within 10%)
 
-cache:
-  db_path: "/var/lib/ncro/routes.db"
-  max_entries: 100000 # LRU eviction above this
-  ttl: 1h # how long a routing decision is trusted
-  latency_alpha: 0.3 # EMA smoothing factor (0 < α < 1)
+[[upstreams]]
+url = "https://nix-community.cachix.org"
+priority = 20
 
-logging:
-  level: info # debug | info | warn | error
-  format: json # json | text
+[cache]
+db_path = "/var/lib/ncro/routes.db"
+max_entries = 100000 # LRU eviction above this
+ttl = "1h" # how long a routing decision is trusted
+latency_alpha = 0.3 # EMA smoothing factor (0 < alpha < 1)
 
-mesh:
-  enabled: false
-  bind_addr: "0.0.0.0:7946"
-  peers: [] # list of {addr, public_key} peer entries
-  private_key: "" # path to ed25519 key file; empty = ephemeral
-  gossip_interval: 30s
+[logging]
+level = "info" # debug | info | warn | error
+format = "json" # json | text
+
+[mesh]
+enabled = false
+bind_addr = "0.0.0.0:7946"
+peers = [] # list of {addr, public_key} peer entries
+private_key = "" # path to ed25519 key file; empty = ephemeral
+gossip_interval = "30s"
 ```
 
 ### Environment Overrides
@@ -132,7 +134,7 @@ Systemd service:
 Description=Nix Cache Route Optimizer
 
 [Service]
-ExecStart=ncro --config /etc/ncro/config.yaml
+ExecStart=ncro --config /etc/ncro/config.toml
 DynamicUser=true
 StateDirectory=ncro
 Restart=on-failure
@@ -157,15 +159,18 @@ Each peer entry takes an address and an optional ed25519 public key. When a
 public key is provided, incoming gossip packets are verified against it; packets
 from unlisted senders or with invalid signatures are silently dropped.
 
-```yaml
-mesh:
-  enabled: true
-  peers:
-    - addr: "100.64.1.2:7946"
-      public_key: "a1b2c3..." # hex-encoded ed25519 public key (32 bytes)
-    - addr: "100.64.1.3:7946"
-      public_key: "d4e5f6..."
-  private_key: "/var/lib/ncro/node.key"
+```toml
+[mesh]
+enabled = true
+private_key = "/var/lib/ncro/node.key"
+
+[[mesh.peers]]
+addr = "100.64.1.2:7946"
+public_key = "a1b2c3..." # hex-encoded ed25519 public key (32 bytes)
+
+[[mesh.peers]]
+addr = "100.64.1.3:7946"
+public_key = "d4e5f6..."
 ```
 
 The node logs its public key on startup (`mesh node identity` log line). You
