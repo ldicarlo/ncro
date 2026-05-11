@@ -164,6 +164,7 @@ impl NarInfo {
     Ok(narinfo)
   }
 
+  #[must_use] 
   pub fn fingerprint(&self) -> String {
     let refs = self
       .references

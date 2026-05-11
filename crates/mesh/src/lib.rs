@@ -72,9 +72,11 @@ impl Node {
     })
   }
 
+  #[must_use] 
   pub fn id(&self) -> String {
     hex::encode(&self.public_key()[..8])
   }
+  #[must_use] 
   pub fn public_key(&self) -> [u8; 32] {
     self.signing_key.verifying_key().to_bytes()
   }

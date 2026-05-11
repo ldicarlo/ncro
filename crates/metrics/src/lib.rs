@@ -99,6 +99,7 @@ pub fn get() -> &'static Metrics {
   })
 }
 
+#[must_use] 
 pub fn gather() -> String {
   let mut buf = Vec::new();
   let encoder = TextEncoder::new();
