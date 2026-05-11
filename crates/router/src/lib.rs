@@ -6,15 +6,11 @@ use std::{
 
 use chrono::Utc;
 use futures_util::{StreamExt, stream::FuturesUnordered};
+use ncro_db::{Db, DbError, RouteEntry};
+use ncro_health::{Prober, Status};
+use ncro_narinfo::{NarInfo, NarInfoError, parse_public_key};
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
-
-use crate::{
-  db::{Db, RouteEntry},
-  health::{Prober, Status},
-  metrics,
-  narinfo::NarInfo,
-};
 
 #[derive(Debug, Error)]
 pub enum RouterError {
@@ -27,7 +23,7 @@ pub enum RouterError {
   #[error("narinfo signature verification failed")]
   SignatureVerificationFailed,
   #[error(transparent)]
-  Db(#[from] crate::db::DbError),
+  Db(#[from] DbError),
 }
 
 #[derive(Debug, Clone)]
@@ -89,8 +85,8 @@ impl Router {
     &self,
     url: String,
     public_key: String,
-  ) -> Result<(), crate::narinfo::NarInfoError> {
-    crate::narinfo::parse_public_key(&public_key)?;
+  ) -> Result<(), NarInfoError> {
+    parse_public_key(&public_key)?;
     self
       .inner
       .upstream_keys
@@ -111,7 +107,7 @@ impl Router {
     if let Some(result) = self.valid_cached_route(store_hash).await? {
       return Ok(result);
     }
-    metrics::get().narinfo_cache_misses.inc();
+    ncro_metrics::get().narinfo_cache_misses.inc();
 
     let lock = {
       let mut inflight = self.inner.inflight.lock().await;
@@ -153,7 +149,7 @@ impl Router {
     if !health.as_ref().is_none_or(|h| h.status == Status::Active) {
       return Ok(None);
     }
-    metrics::get().narinfo_cache_hits.inc();
+    ncro_metrics::get().narinfo_cache_hits.inc();
     Ok(Some(ResolveResult {
       url:           entry.upstream_url,
       latency_ms:    entry.latency_ema,
@@ -219,11 +215,11 @@ impl Router {
       };
     };
 
-    metrics::get()
+    ncro_metrics::get()
       .upstream_race_wins
       .with_label_values(&[&winner.url])
       .inc();
-    metrics::get()
+    ncro_metrics::get()
       .upstream_latency
       .with_label_values(&[&winner.url])
       .observe(winner.latency_ms / 1000.0);

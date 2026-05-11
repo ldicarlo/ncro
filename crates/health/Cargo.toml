@@ -1,0 +1,10 @@
+[package]
+name = "ncro-health"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ncro-config.workspace = true
+reqwest = { workspace = true, features = [ "rustls" ] }
+tokio = { workspace = true, features = [ "sync", "time", "rt" ] }

@@ -1,0 +1,14 @@
+[package]
+name = "ncro-narinfo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+base64.workspace = true
+ed25519-dalek.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+ed25519-dalek = { workspace = true, features = [ "rand_core" ] }
+rand.workspace = true

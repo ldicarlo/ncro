@@ -2,12 +2,11 @@ use std::{path::Path, sync::Arc};
 
 use chrono::Utc;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use rand::rngs::OsRng;
+use ncro_db::{Db, RouteEntry};
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{net::UdpSocket, time::Duration};
-
-use crate::db::{Db, RouteEntry};
 
 const MAX_PACKET_SIZE: usize = 65_536;
 const HEADER_SIZE: usize = 96;
@@ -50,7 +49,7 @@ impl Node {
   pub async fn new(key_path: &str) -> Result<Self, MeshError> {
     if key_path.is_empty() {
       return Ok(Self {
-        signing_key: Arc::new(SigningKey::generate(&mut OsRng)),
+        signing_key: Arc::new(SigningKey::from_bytes(&random_key_bytes())),
       });
     }
     if let Ok(data) = tokio::fs::read(key_path).await
@@ -66,7 +65,7 @@ impl Node {
     if let Some(parent) = Path::new(key_path).parent() {
       tokio::fs::create_dir_all(parent).await?;
     }
-    let key = SigningKey::generate(&mut OsRng);
+    let key = SigningKey::from_bytes(&random_key_bytes());
     tokio::fs::write(key_path, key.to_bytes()).await?;
     Ok(Self {
       signing_key: Arc::new(key),
@@ -86,6 +85,12 @@ impl Node {
       self.signing_key.sign(&body).to_bytes().to_vec(),
     ))
   }
+}
+
+fn random_key_bytes() -> [u8; 32] {
+  let mut bytes = [0_u8; 32];
+  rand::rng().fill(&mut bytes);
+  bytes
 }
 
 pub fn verify(pubkey: &[u8], body: &[u8], sig: &[u8]) -> Result<(), MeshError> {

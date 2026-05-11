@@ -1,17 +1,11 @@
 use clap::Parser;
+use ncro_config::Config;
+use ncro_db::Db;
+use ncro_discovery::Discovery;
+use ncro_health::Prober;
+use ncro_router::Router;
 use tokio::net::TcpListener;
 use tracing_subscriber::{EnvFilter, fmt};
-
-use crate::{
-  config::Config,
-  db::Db,
-  discovery::Discovery,
-  health::Prober,
-  mesh,
-  metrics,
-  router::Router,
-  server,
-};
 
 #[derive(Debug, Parser)]
 #[command(name = "ncro", version, about = "Nix Cache Route Optimizer")]
@@ -26,7 +20,7 @@ pub async fn run() -> anyhow::Result<()> {
   cfg.validate()?;
 
   init_logging(&cfg.logging.level, &cfg.logging.format);
-  let _ = metrics::get();
+  let _ = ncro_metrics::get();
 
   let db = Db::open(&cfg.cache.db_path, cfg.cache.max_entries).await?;
   let prober = Prober::new(cfg.cache.latency_alpha);
@@ -99,7 +93,7 @@ pub async fn run() -> anyhow::Result<()> {
           _ = ticker.tick() => {
               let _ = db_for_expiry.expire_old_routes().await;
               let _ = db_for_expiry.expire_negatives().await;
-              if let Ok(count) = db_for_expiry.route_count().await { metrics::get().route_entries.set(count); }
+              if let Ok(count) = db_for_expiry.route_count().await { ncro_metrics::get().route_entries.set(count); }
           }
       }
     }
@@ -114,7 +108,7 @@ pub async fn run() -> anyhow::Result<()> {
   }
 
   if cfg.mesh.enabled {
-    let node = mesh::Node::new(&cfg.mesh.private_key_path).await?;
+    let node = ncro_mesh::Node::new(&cfg.mesh.private_key_path).await?;
     tracing::info!(
       node_id = node.id(),
       public_key = hex::encode(node.public_key()),
@@ -126,7 +120,7 @@ pub async fn run() -> anyhow::Result<()> {
       .iter()
       .filter_map(|p| hex::decode(&p.public_key).ok()?.try_into().ok())
       .collect::<Vec<[u8; 32]>>();
-    mesh::listen_and_serve(
+    ncro_mesh::listen_and_serve(
       &cfg.mesh.bind_addr,
       db.clone(),
       allowed,
@@ -139,7 +133,7 @@ pub async fn run() -> anyhow::Result<()> {
       .iter()
       .map(|p| p.addr.clone())
       .collect::<Vec<_>>();
-    tokio::spawn(mesh::run_gossip_loop(
+    tokio::spawn(ncro_mesh::run_gossip_loop(
       node,
       db.clone(),
       peers,
@@ -148,7 +142,7 @@ pub async fn run() -> anyhow::Result<()> {
     ));
   }
 
-  let app = server::app(
+  let app = ncro_server::app(
     router,
     prober,
     db,

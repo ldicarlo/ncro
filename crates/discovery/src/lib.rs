@@ -5,9 +5,9 @@ use std::{
 };
 
 use mdns_sd::{ServiceDaemon, ServiceEvent};
+use ncro_config::DiscoveryConfig;
+use ncro_health::Prober;
 use tokio::sync::{Mutex, watch};
-
-use crate::{config::DiscoveryConfig, health::Prober};
 
 pub struct Discovery {
   cfg:    DiscoveryConfig,

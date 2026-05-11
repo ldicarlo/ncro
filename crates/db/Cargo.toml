@@ -1,0 +1,12 @@
+[package]
+name = "ncro-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+chrono = { workspace = true, features = [ "serde" ] }
+serde = { workspace = true, features = [ "derive" ] }
+sqlx = { workspace = true, features = [ "runtime-tokio-rustls", "sqlite", "macros", "migrate", "chrono" ] }
+thiserror.workspace = true
+tokio = { workspace = true, features = [ "fs" ] }

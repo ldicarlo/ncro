@@ -31,7 +31,7 @@ pub enum NarInfoError {
 #[cfg(test)]
 mod tests {
   use ed25519_dalek::{Signer, SigningKey};
-  use rand::rngs::OsRng;
+  use rand::RngExt;
 
   use super::*;
 
@@ -50,7 +50,9 @@ mod tests {
 
   #[test]
   fn verifies_roundtrip_signature() -> Result<(), NarInfoError> {
-    let signing = SigningKey::generate(&mut OsRng);
+    let mut key_bytes = [0_u8; 32];
+    rand::rng().fill(&mut key_bytes);
+    let signing = SigningKey::from_bytes(&key_bytes);
     let mut ni = NarInfo {
       store_path: "/nix/store/abc-test".into(),
       nar_hash: "sha256:abc".into(),

@@ -5,9 +5,8 @@ use std::{
   time::{Duration, Instant},
 };
 
+use ncro_config::UpstreamConfig;
 use tokio::sync::RwLock;
-
-use crate::config::UpstreamConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Status {

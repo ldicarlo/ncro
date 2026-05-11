@@ -10,15 +10,11 @@ use axum::{
 };
 use bytes::Bytes;
 use futures_util::TryStreamExt;
+use ncro_config::UpstreamConfig;
+use ncro_db::Db;
+use ncro_health::{Prober, Status};
+use ncro_router::{Router, RouterError};
 use serde::Serialize;
-
-use crate::{
-  config::UpstreamConfig,
-  db::Db,
-  health::{Prober, Status},
-  metrics,
-  router::{Router, RouterError},
-};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -113,7 +109,7 @@ async fn health(State(state): State<Arc<AppState>>) -> Response {
 async fn metrics_endpoint() -> Response {
   (
     [("content-type", "text/plain; version=0.0.4")],
-    metrics::gather(),
+    ncro_metrics::gather(),
   )
     .into_response()
 }
@@ -133,7 +129,7 @@ async fn narinfo(
         latency_ms = result.latency_ms,
         "narinfo routed"
       );
-      metrics::get()
+      ncro_metrics::get()
         .narinfo_requests
         .with_label_values(&["200"])
         .inc();
@@ -154,7 +150,7 @@ async fn narinfo(
       .await
     },
     Err(RouterError::NotFound) => {
-      metrics::get()
+      ncro_metrics::get()
         .narinfo_requests
         .with_label_values(&["error"])
         .inc();
@@ -162,7 +158,7 @@ async fn narinfo(
     },
     Err(err) => {
       tracing::warn!(hash, error = %err, "narinfo resolve failed");
-      metrics::get()
+      ncro_metrics::get()
         .narinfo_requests
         .with_label_values(&["error"])
         .inc();
@@ -175,7 +171,7 @@ async fn nar(
   State(state): State<Arc<AppState>>,
   req: Request<Body>,
 ) -> Response {
-  metrics::get().nar_requests.inc();
+  ncro_metrics::get().nar_requests.inc();
   let nar_url = req.uri().path().trim_start_matches('/').to_string();
   if let Ok(Some(entry)) = state.db.get_route_by_nar_url(&nar_url).await
     && entry.is_valid()
