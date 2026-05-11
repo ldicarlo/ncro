@@ -5,7 +5,7 @@
 }:
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "ncro";
-  version = "1.0.0";
+  version = "2.0.0";
 
   src = let
     fs = lib.fileset;
@@ -14,7 +14,8 @@ rustPlatform.buildRustPackage (finalAttrs: {
     fs.toSource {
       root = s;
       fileset = fs.unions [
-        (s + /src)
+        (s + /ncro)
+        (s + /crates)
         (s + /Cargo.toml)
         (s + /Cargo.lock)
       ];
@@ -24,6 +25,8 @@ rustPlatform.buildRustPackage (finalAttrs: {
   nativeBuildInputs = [pkg-config];
 
   meta = {
+    homepage = "https://github.com/feel-co/ncro";
+    license = lib.licenses.eupl12;
     mainProgram = "ncro";
     maintainers = with lib.maintainers; [NotAShelf];
   };

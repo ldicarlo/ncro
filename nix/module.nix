@@ -7,22 +7,28 @@ self: {
   inherit (lib.modules) mkIf;
   inherit (lib.options) mkOption mkEnableOption mkPackageOption;
 
-  format = pkgs.formats.toml {};
+  tomlFormat = pkgs.formats.toml {};
+  tomlType = tomlFormat.type;
 
   cfg = config.services.ncro;
-  configFile = format.generate "ncro.toml" cfg.settings;
+  configFile = tomlFormat.generate "ncro.toml" cfg.settings;
 in {
   options.services.ncro = {
     enable = mkEnableOption "ncro, the Nix cache route optimizer";
 
-    package = mkPackageOption self.packages.${pkgs.stdenv.hostPlatform.system} ["ncro"] {};
+    package = mkPackageOption self.packages.${pkgs.stdenv.hostPlatform.system} {
+      default = "ncro";
+      pkgsText = "self.packages.$${pkgs.stdenv.hostPlatform.system}";
+    };
 
     settings = mkOption {
-      type = format.type;
+      type = tomlType;
       default = {};
       description = ''
-        ncro configuration as an attribute set. Keys and structure match the
-        TOML config file format; all defaults are handled by the ncro binary.
+        ncro configuration as an attribute set.
+
+        Keys and structure match the TOML config file format; all defaults are
+        handled by the ncro binary.
       '';
       example = {
         logging.level = "info";
@@ -56,7 +62,7 @@ in {
       wantedBy = ["multi-user.target"];
       after = ["network.target"];
       serviceConfig = {
-        ExecStart = "${lib.getExe cfg.package} --config ${configFile}";
+        ExecStart = "${lib.getExe' cfg.package "ncro"} --config ${configFile}";
         DynamicUser = true;
         StateDirectory = "ncro";
         Restart = "on-failure";
