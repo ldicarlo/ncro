@@ -195,10 +195,10 @@ Prometheus metrics are available at `/metrics`.
 # With Nix (recommended)
 $ nix build
 
-# With Go directly
-$ go build ./cmd/ncro/
+# With Cargo directly
+$ cargo build --release
 
 # Development shell
 $ nix develop
-$ go test ./...
+$ cargo test
 ```

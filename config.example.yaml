@@ -16,7 +16,15 @@ cache:
   db_path: "/var/lib/ncro/routes.db"
   max_entries: 100000
   ttl: 1h
+  negative_ttl: 10m
   latency_alpha: 0.3
+
+discovery:
+  enabled: false
+  service_name: "_nix-serve._tcp"
+  domain: "local"
+  discovery_time: 5s
+  priority: 20
 
 mesh:
   enabled: false

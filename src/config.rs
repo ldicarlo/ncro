@@ -1,0 +1,336 @@
+use std::{env, fs, time::Duration};
+
+use serde::{Deserialize, Deserializer};
+use thiserror::Error;
+use url::Url;
+
+#[derive(Debug, Error)]
+pub enum ConfigError {
+  #[error("read config: {0}")]
+  Read(#[from] std::io::Error),
+  #[error("parse config: {0}")]
+  Parse(#[from] serde_yaml::Error),
+  #[error("{0}")]
+  Validation(String),
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn loads_defaults() -> Result<(), ConfigError> {
+    let cfg = Config::load(None)?;
+    assert_eq!(cfg.server.listen, ":8080");
+    assert_eq!(cfg.cache.max_entries, 100_000);
+    assert_eq!(cfg.upstreams.len(), 1);
+    cfg.validate()?;
+    Ok(())
+  }
+
+  #[test]
+  fn parses_duration_yaml() -> Result<(), serde_yaml::Error> {
+    let cfg: Config = serde_yaml::from_str(
+      "server:\n  read_timeout: 30s\ncache:\n  ttl: 2h\n",
+    )?;
+    assert_eq!(cfg.server.read_timeout.0, Duration::from_secs(30));
+    assert_eq!(cfg.cache.ttl.0, Duration::from_secs(7200));
+    Ok(())
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HumanDuration(pub Duration);
+
+impl Default for HumanDuration {
+  fn default() -> Self {
+    Self(Duration::ZERO)
+  }
+}
+
+impl<'de> Deserialize<'de> for HumanDuration {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: Deserializer<'de>,
+  {
+    humantime_serde::deserialize(deserializer).map(Self)
+  }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct UpstreamConfig {
+  pub url:        String,
+  pub priority:   i32,
+  pub public_key: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ServerConfig {
+  pub listen:         String,
+  pub read_timeout:   HumanDuration,
+  pub write_timeout:  HumanDuration,
+  pub cache_priority: i32,
+}
+
+impl Default for ServerConfig {
+  fn default() -> Self {
+    Self {
+      listen:         ":8080".to_string(),
+      read_timeout:   HumanDuration(Duration::from_secs(30)),
+      write_timeout:  HumanDuration(Duration::from_secs(30)),
+      cache_priority: 30,
+    }
+  }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CacheConfig {
+  pub db_path:       String,
+  pub max_entries:   i64,
+  pub ttl:           HumanDuration,
+  pub negative_ttl:  HumanDuration,
+  pub latency_alpha: f64,
+}
+
+impl Default for CacheConfig {
+  fn default() -> Self {
+    Self {
+      db_path:       "/var/lib/ncro/routes.db".to_string(),
+      max_entries:   100_000,
+      ttl:           HumanDuration(Duration::from_secs(60 * 60)),
+      negative_ttl:  HumanDuration(Duration::from_secs(10 * 60)),
+      latency_alpha: 0.3,
+    }
+  }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct PeerConfig {
+  pub addr:       String,
+  pub public_key: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct MeshConfig {
+  pub enabled:          bool,
+  pub bind_addr:        String,
+  pub peers:            Vec<PeerConfig>,
+  #[serde(rename = "private_key")]
+  pub private_key_path: String,
+  pub gossip_interval:  HumanDuration,
+}
+
+impl Default for MeshConfig {
+  fn default() -> Self {
+    Self {
+      enabled:          false,
+      bind_addr:        "0.0.0.0:7946".to_string(),
+      peers:            Vec::new(),
+      private_key_path: String::new(),
+      gossip_interval:  HumanDuration(Duration::from_secs(30)),
+    }
+  }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct DiscoveryConfig {
+  pub enabled:        bool,
+  pub service_name:   String,
+  pub domain:         String,
+  pub discovery_time: HumanDuration,
+  pub priority:       i32,
+}
+
+impl Default for DiscoveryConfig {
+  fn default() -> Self {
+    Self {
+      enabled:        false,
+      service_name:   "_nix-serve._tcp".to_string(),
+      domain:         "local".to_string(),
+      discovery_time: HumanDuration(Duration::from_secs(5)),
+      priority:       20,
+    }
+  }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct LoggingConfig {
+  pub level:  String,
+  pub format: String,
+}
+
+impl Default for LoggingConfig {
+  fn default() -> Self {
+    Self {
+      level:  "info".to_string(),
+      format: "json".to_string(),
+    }
+  }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct Config {
+  pub server:    ServerConfig,
+  pub upstreams: Vec<UpstreamConfig>,
+  pub cache:     CacheConfig,
+  pub mesh:      MeshConfig,
+  pub discovery: DiscoveryConfig,
+  pub logging:   LoggingConfig,
+}
+
+impl Default for Config {
+  fn default() -> Self {
+    Self {
+      server:    ServerConfig::default(),
+      upstreams: vec![UpstreamConfig {
+        url:        "https://cache.nixos.org".to_string(),
+        priority:   10,
+        public_key: String::new(),
+      }],
+      cache:     CacheConfig::default(),
+      mesh:      MeshConfig::default(),
+      discovery: DiscoveryConfig::default(),
+      logging:   LoggingConfig::default(),
+    }
+  }
+}
+
+impl Config {
+  pub fn load(path: Option<&str>) -> Result<Self, ConfigError> {
+    let mut cfg = if let Some(path) = path.filter(|p| !p.is_empty()) {
+      let data = fs::read_to_string(path)?;
+      serde_yaml::from_str::<Self>(&data)?
+    } else {
+      Self::default()
+    };
+
+    if let Ok(v) = env::var("NCRO_LISTEN")
+      && !v.is_empty()
+    {
+      cfg.server.listen = v;
+    }
+    if let Ok(v) = env::var("NCRO_DB_PATH")
+      && !v.is_empty()
+    {
+      cfg.cache.db_path = v;
+    }
+    if let Ok(v) = env::var("NCRO_LOG_LEVEL")
+      && !v.is_empty()
+    {
+      cfg.logging.level = v;
+    }
+
+    Ok(cfg)
+  }
+
+  pub fn validate(&self) -> Result<(), ConfigError> {
+    if self.upstreams.is_empty() {
+      return Err(ConfigError::Validation(
+        "at least one upstream is required".to_string(),
+      ));
+    }
+    for (i, upstream) in self.upstreams.iter().enumerate() {
+      if upstream.url.is_empty() {
+        return Err(ConfigError::Validation(format!(
+          "upstream[{i}]: URL is empty"
+        )));
+      }
+      Url::parse(&upstream.url).map_err(|err| {
+        ConfigError::Validation(format!(
+          "upstream[{i}]: invalid URL {:?}: {err}",
+          upstream.url
+        ))
+      })?;
+      if !upstream.public_key.is_empty() && !upstream.public_key.contains(':') {
+        return Err(ConfigError::Validation(format!(
+          "upstream[{i}]: public_key must be in 'name:base64(key)' Nix format"
+        )));
+      }
+    }
+    if self.server.listen.is_empty() {
+      return Err(ConfigError::Validation(
+        "server.listen is empty".to_string(),
+      ));
+    }
+    if self.server.cache_priority < 1 {
+      return Err(ConfigError::Validation(format!(
+        "server.cache_priority must be >= 1, got {}",
+        self.server.cache_priority
+      )));
+    }
+    if self.cache.latency_alpha <= 0.0 || self.cache.latency_alpha >= 1.0 {
+      return Err(ConfigError::Validation(format!(
+        "cache.latency_alpha must be between 0 and 1 exclusive, got {}",
+        self.cache.latency_alpha
+      )));
+    }
+    if self.cache.ttl.0.is_zero() {
+      return Err(ConfigError::Validation(
+        "cache.ttl must be positive".to_string(),
+      ));
+    }
+    if self.cache.negative_ttl.0.is_zero() {
+      return Err(ConfigError::Validation(
+        "cache.negative_ttl must be positive".to_string(),
+      ));
+    }
+    if self.cache.max_entries <= 0 {
+      return Err(ConfigError::Validation(
+        "cache.max_entries must be positive".to_string(),
+      ));
+    }
+    if self.mesh.enabled && self.mesh.peers.is_empty() {
+      return Err(ConfigError::Validation(
+        "mesh.enabled is true but no peers configured".to_string(),
+      ));
+    }
+    for (i, peer) in self.mesh.peers.iter().enumerate() {
+      if peer.addr.is_empty() {
+        return Err(ConfigError::Validation(format!(
+          "mesh.peers[{i}]: addr is empty"
+        )));
+      }
+      if !peer.public_key.is_empty() {
+        let bytes = hex::decode(&peer.public_key).map_err(|_| {
+          ConfigError::Validation(format!(
+            "mesh.peers[{i}]: public_key must be a hex-encoded 32-byte \
+             ed25519 key"
+          ))
+        })?;
+        if bytes.len() != 32 {
+          return Err(ConfigError::Validation(format!(
+            "mesh.peers[{i}]: public_key must be a hex-encoded 32-byte \
+             ed25519 key"
+          )));
+        }
+      }
+    }
+    if self.discovery.enabled {
+      if self.discovery.service_name.is_empty() {
+        return Err(ConfigError::Validation(
+          "discovery.service_name is required when discovery is enabled"
+            .to_string(),
+        ));
+      }
+      if self.discovery.domain.is_empty() {
+        return Err(ConfigError::Validation(
+          "discovery.domain is required when discovery is enabled".to_string(),
+        ));
+      }
+      if self.discovery.discovery_time.0.is_zero() {
+        return Err(ConfigError::Validation(
+          "discovery.discovery_time must be positive".to_string(),
+        ));
+      }
+    }
+    Ok(())
+  }
+}

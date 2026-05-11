@@ -1,8 +1,9 @@
 {
   lib,
-  buildGoModule,
+  rustPlatform,
+  pkg-config,
 }:
-buildGoModule (finalAttrs: {
+rustPlatform.buildRustPackage (finalAttrs: {
   pname = "ncro";
   version = "1.0.0";
 
@@ -13,15 +14,14 @@ buildGoModule (finalAttrs: {
     fs.toSource {
       root = s;
       fileset = fs.unions [
-        (s + /cmd)
-        (s + /internal)
-        (s + /go.mod)
-        (s + /go.sum)
+        (s + /src)
+        (s + /Cargo.toml)
+        (s + /Cargo.lock)
       ];
     };
 
-  vendorHash = "sha256-9OkQIj2g5mZ+IpjIKvy8Il7J4xL4PJimEsXJP10FhmU=";
-  ldflags = ["-s" "-w" "-X main.version=${finalAttrs.version}"];
+  cargoLock.lockFile = "${finalAttrs.src}/Cargo.lock";
+  nativeBuildInputs = [pkg-config];
 
   meta = {
     mainProgram = "ncro";

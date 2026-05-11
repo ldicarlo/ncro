@@ -1,18 +1,23 @@
 {
   mkShell,
-  go,
-  gopls,
-  delve,
-  gofumpt,
-  golines,
+  cargo,
+  clippy,
+  pkg-config,
+  rust-analyzer,
+  rustc,
+  rustfmt,
 }:
 mkShell {
-  name = "go";
-  packages = [
-    delve
-    go
-    gopls
-    gofumpt
-    golines
+  name = "rust";
+
+  strictDeps = true;
+  nativeBuildInputs = [
+    cargo
+    rustc
+    pkg-config
+
+    rust-analyzer
+    clippy
+    (rustfmt.override {asNightly = true;})
   ];
 }
