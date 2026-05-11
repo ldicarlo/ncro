@@ -25,9 +25,5 @@ ncro-metrics.workspace   = true
 ncro-router.workspace    = true
 ncro-server.workspace    = true
 
-[dev-dependencies]
-tempfile.workspace = true
-tower              = { workspace = true, features = [ "util" ] }
-
 [lints]
 workspace = true
