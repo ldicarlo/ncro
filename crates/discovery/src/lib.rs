@@ -7,7 +7,7 @@ use std::{
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 use ncro_config::DiscoveryConfig;
 use ncro_health::Prober;
-use tokio::sync::{Mutex, watch};
+use tokio::sync::{Mutex, mpsc, watch};
 
 pub struct Discovery {
   cfg:    DiscoveryConfig,
@@ -36,6 +36,14 @@ impl Discovery {
       self.cfg.domain.trim_end_matches('.')
     );
     let receiver = self.daemon.browse(&service)?;
+    let (event_tx, mut event_rx) = mpsc::channel(16);
+    tokio::task::spawn_blocking(move || {
+      while let Ok(event) = receiver.recv() {
+        if event_tx.blocking_send(event).is_err() {
+          break;
+        }
+      }
+    });
     let peers = Arc::clone(&self.peers);
     let prober = self.prober.clone();
     let priority = self.cfg.priority;
@@ -59,8 +67,8 @@ impl Discovery {
               };
               for (_, url) in stale { tracing::info!(url, "removing stale peer"); prober.remove_upstream(&url).await; }
           }
-          event = tokio::task::spawn_blocking({ let receiver = receiver.clone(); move || receiver.recv_timeout(Duration::from_millis(500)).ok() }) => {
-              if let Ok(Some(ServiceEvent::ServiceResolved(info))) = event {
+          event = event_rx.recv() => {
+              if let Some(ServiceEvent::ServiceResolved(info)) = event {
                   let Some(addr) = info.get_addresses().iter().next().map(mdns_sd::ScopedIp::to_ip_addr) else { continue; };
                   let url = format!("http://{}", std::net::SocketAddr::new(addr, info.get_port()));
                   let key = info.get_fullname().to_string();

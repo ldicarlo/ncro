@@ -14,6 +14,8 @@ pub enum DbError {
   Sqlx(#[from] sqlx::Error),
   #[error("create database directory: {0}")]
   CreateDir(#[from] std::io::Error),
+  #[error("invalid stored route data: {0}")]
+  InvalidData(String),
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -90,7 +92,7 @@ impl Db {
         .bind(store_path)
         .fetch_optional(&self.pool)
         .await?;
-    Ok(row.as_ref().map(row_to_route))
+    row.as_ref().map(row_to_route).transpose()
   }
 
   pub async fn get_route_by_nar_url(
@@ -106,7 +108,7 @@ impl Db {
         .bind(Utc::now().timestamp())
         .fetch_optional(&self.pool)
         .await?;
-    Ok(row.as_ref().map(row_to_route))
+    row.as_ref().map(row_to_route).transpose()
   }
 
   pub async fn set_route(&self, entry: &RouteEntry) -> Result<(), DbError> {
@@ -164,7 +166,7 @@ impl Db {
         .bind(n)
         .fetch_all(&self.pool)
         .await?;
-    Ok(rows.iter().map(row_to_route).collect())
+    rows.iter().map(row_to_route).collect()
   }
 
   pub async fn route_count(&self) -> Result<i64, DbError> {
@@ -335,29 +337,40 @@ async fn migrate(pool: &SqlitePool) -> Result<(), DbError> {
   Ok(())
 }
 
-fn row_to_route(row: &sqlx::sqlite::SqliteRow) -> RouteEntry {
+fn row_to_route(row: &sqlx::sqlite::SqliteRow) -> Result<RouteEntry, DbError> {
   let query_count = row.get::<i64, _>("query_count");
   let failure_count = row.get::<i64, _>("failure_count");
   let nar_size = row.get::<i64, _>("nar_size");
-  RouteEntry {
+  Ok(RouteEntry {
     store_path:    row.get("store_path"),
     upstream_url:  row.get("upstream_url"),
     latency_ms:    row.get("latency_ms"),
     latency_ema:   row.get("latency_ema"),
-    query_count:   u32::try_from(query_count).unwrap_or_default(),
-    failure_count: u32::try_from(failure_count).unwrap_or_default(),
-    last_verified: Utc
-      .timestamp_opt(row.get("last_verified"), 0)
-      .single()
-      .unwrap_or_else(Utc::now),
-    ttl:           Utc
-      .timestamp_opt(row.get("ttl"), 0)
-      .single()
-      .unwrap_or_else(Utc::now),
+    query_count:   u32::try_from(query_count).map_err(|_| {
+      DbError::InvalidData(format!("query_count out of range: {query_count}"))
+    })?,
+    failure_count: u32::try_from(failure_count).map_err(|_| {
+      DbError::InvalidData(format!(
+        "failure_count out of range: {failure_count}"
+      ))
+    })?,
+    last_verified: timestamp(row.get("last_verified"), "last_verified")?,
+    ttl:           timestamp(row.get("ttl"), "ttl")?,
     nar_hash:      row.get("nar_hash"),
-    nar_size:      u64::try_from(nar_size).unwrap_or_default(),
+    nar_size:      u64::try_from(nar_size).map_err(|_| {
+      DbError::InvalidData(format!("nar_size out of range: {nar_size}"))
+    })?,
     nar_url:       row.get("nar_url"),
-  }
+  })
+}
+
+fn timestamp(
+  value: i64,
+  field: &'static str,
+) -> Result<DateTime<Utc>, DbError> {
+  Utc.timestamp_opt(value, 0).single().ok_or_else(|| {
+    DbError::InvalidData(format!("{field} timestamp out of range: {value}"))
+  })
 }
 
 #[cfg(test)]

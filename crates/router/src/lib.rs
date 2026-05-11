@@ -22,6 +22,10 @@ pub enum RouterError {
   NoCandidates(String),
   #[error("narinfo signature verification failed")]
   SignatureVerificationFailed,
+  #[error("fetch narinfo: {0}")]
+  FetchNarinfo(#[from] reqwest::Error),
+  #[error("parse narinfo: {0}")]
+  ParseNarinfo(#[from] NarInfoError),
   #[error(transparent)]
   Db(#[from] DbError),
 }
@@ -57,29 +61,30 @@ struct RaceResult {
 }
 
 impl Router {
-  #[must_use]
+  /// Create a router backed by the database and health prober.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the HTTP client cannot be constructed.
   pub fn new(
     db: Db,
     prober: Prober,
     route_ttl: Duration,
     race_timeout: Duration,
     negative_ttl: Duration,
-  ) -> Self {
-    Self {
+  ) -> Result<Self, reqwest::Error> {
+    Ok(Self {
       inner: Arc::new(RouterInner {
         db,
         prober,
         route_ttl,
         race_timeout,
         negative_ttl,
-        client: reqwest::Client::builder()
-          .timeout(race_timeout)
-          .build()
-          .unwrap_or_else(|_| reqwest::Client::new()),
+        client: reqwest::Client::builder().timeout(race_timeout).build()?,
         upstream_keys: RwLock::new(HashMap::new()),
         inflight: Mutex::new(HashMap::new()),
       }),
-    }
+    })
   }
 
   pub async fn set_upstream_key(
@@ -192,22 +197,24 @@ impl Router {
     }
     let mut net_errs = 0;
     let mut not_founds = 0;
-    let mut winner: Option<RaceResult> = None;
     let deadline = tokio::time::sleep(self.inner.race_timeout);
     tokio::pin!(deadline);
-    while !handles.is_empty() {
+    let winner = loop {
+      if handles.is_empty() {
+        break None;
+      }
       tokio::select! {
-          () = &mut deadline => break,
+          () = &mut deadline => break None,
           joined = handles.next() => {
               match joined {
-                  Some(Ok(Ok(res))) => if winner.as_ref().is_none_or(|w| res.latency_ms < w.latency_ms) { winner = Some(res); },
+                  Some(Ok(Ok(res))) => break Some(res),
                   Some(Ok(Err(true)) | Err(_)) => net_errs += 1,
                   Some(Ok(Err(false))) => not_founds += 1,
-                  None => break,
+                  None => break None,
               }
           }
       }
-    }
+    };
     let Some(winner) = winner else {
       return if net_errs > 0 && not_founds == 0 {
         Err(RouterError::UpstreamUnavailable)
@@ -272,25 +279,18 @@ impl Router {
     upstream: &str,
     store_hash: &str,
   ) -> Result<(Option<Vec<u8>>, String, String, u64), RouterError> {
-    let Ok(resp) = self
+    let resp = self
       .inner
       .client
       .get(format!("{upstream}/{store_hash}.narinfo"))
       .send()
-      .await
-    else {
-      return Ok((None, String::new(), String::new(), 0));
-    };
+      .await?;
     if !resp.status().is_success() {
-      return Ok((None, String::new(), String::new(), 0));
+      return Err(RouterError::NotFound);
     }
-    let Ok(bytes) = resp.bytes().await else {
-      return Ok((None, String::new(), String::new(), 0));
-    };
+    let bytes = resp.bytes().await?;
     let body = bytes.to_vec();
-    let Ok(parsed) = NarInfo::parse(body.as_slice()) else {
-      return Ok((Some(body), String::new(), String::new(), 0));
-    };
+    let parsed = NarInfo::parse(body.as_slice())?;
     if let Some(pubkey) = self.inner.upstream_keys.read().await.get(upstream)
       && !parsed.verify(pubkey).unwrap_or(false)
     {

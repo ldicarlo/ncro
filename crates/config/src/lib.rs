@@ -31,9 +31,9 @@ mod tests {
   #[test]
   fn parses_duration_toml() -> Result<(), toml::de::Error> {
     let cfg: Config = toml::from_str(
-      "[server]\nread_timeout = \"30s\"\n\n[cache]\nttl = \"2h\"\n",
+      "[server]\ncache_priority = 40\n\n[cache]\nttl = \"2h\"\n",
     )?;
-    assert_eq!(cfg.server.read_timeout.0, Duration::from_secs(30));
+    assert_eq!(cfg.server.cache_priority, 40);
     assert_eq!(cfg.cache.ttl.0, Duration::from_secs(7200));
     Ok(())
   }
@@ -69,8 +69,6 @@ pub struct UpstreamConfig {
 #[serde(default)]
 pub struct ServerConfig {
   pub listen:         String,
-  pub read_timeout:   HumanDuration,
-  pub write_timeout:  HumanDuration,
   pub cache_priority: i32,
 }
 
@@ -78,8 +76,6 @@ impl Default for ServerConfig {
   fn default() -> Self {
     Self {
       listen:         ":8080".to_string(),
-      read_timeout:   HumanDuration(Duration::from_secs(30)),
-      write_timeout:  HumanDuration(Duration::from_secs(30)),
       cache_priority: 30,
     }
   }

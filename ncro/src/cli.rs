@@ -23,7 +23,7 @@ pub async fn run() -> anyhow::Result<()> {
   let _ = ncro_metrics::get();
 
   let db = Db::open(&cfg.cache.db_path, cfg.cache.max_entries).await?;
-  let prober = Prober::new(cfg.cache.latency_alpha);
+  let prober = Prober::new(cfg.cache.latency_alpha)?;
   prober.init_upstreams(&cfg.upstreams).await;
   for row in db.load_all_health().await.unwrap_or_default() {
     prober
@@ -65,7 +65,7 @@ pub async fn run() -> anyhow::Result<()> {
     cfg.cache.ttl.0,
     std::time::Duration::from_secs(5),
     cfg.cache.negative_ttl.0,
-  );
+  )?;
   for upstream in &cfg.upstreams {
     if !upstream.public_key.is_empty() {
       router
@@ -148,7 +148,7 @@ pub async fn run() -> anyhow::Result<()> {
     db,
     cfg.upstreams.clone(),
     cfg.server.cache_priority,
-  );
+  )?;
   let listener =
     TcpListener::bind(normalize_listen(&cfg.server.listen)).await?;
   tracing::info!(

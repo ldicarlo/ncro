@@ -26,13 +26,18 @@ pub struct AppState {
   cache_priority: i32,
 }
 
+/// Build the HTTP application router.
+///
+/// # Errors
+///
+/// Returns an error if the proxy HTTP client cannot be constructed.
 pub fn app(
   router: Router,
   prober: Prober,
   db: Db,
   upstreams: Vec<UpstreamConfig>,
   cache_priority: i32,
-) -> AxumRouter {
+) -> Result<AxumRouter, reqwest::Error> {
   let state = AppState {
     router,
     prober,
@@ -40,17 +45,18 @@ pub fn app(
     upstreams,
     client: reqwest::Client::builder()
       .timeout(std::time::Duration::from_secs(60))
-      .build()
-      .unwrap_or_else(|_| reqwest::Client::new()),
+      .build()?,
     cache_priority,
   };
-  AxumRouter::new()
-    .route("/nix-cache-info", get(cache_info).head(cache_info))
-    .route("/health", get(health))
-    .route("/metrics", get(metrics_endpoint))
-    .route("/{hash}.narinfo", get(narinfo).head(narinfo))
-    .route("/nar/{*path}", get(nar).head(nar))
-    .with_state(Arc::new(state))
+  Ok(
+    AxumRouter::new()
+      .route("/nix-cache-info", get(cache_info).head(cache_info))
+      .route("/health", get(health))
+      .route("/metrics", get(metrics_endpoint))
+      .route("/{hash}.narinfo", get(narinfo).head(narinfo))
+      .route("/nar/{*path}", get(nar).head(nar))
+      .with_state(Arc::new(state)),
+  )
 }
 
 async fn cache_info(State(state): State<Arc<AppState>>) -> Response {

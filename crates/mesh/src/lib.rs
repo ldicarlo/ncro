@@ -8,8 +8,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{net::UdpSocket, time::Duration};
 
-const MAX_PACKET_SIZE: usize = 65_536;
+const MAX_PACKET_SIZE: usize = 1_400;
 const HEADER_SIZE: usize = 96;
+const MAX_GOSSIP_ROUTES: i64 = 25;
 
 type DecodedPacket<'a> = (&'a [u8], &'a [u8], &'a [u8], Message);
 
@@ -25,6 +26,8 @@ pub enum MeshError {
   PacketTooShort(usize),
   #[error("invalid signature")]
   InvalidSignature,
+  #[error("invalid key file size {got}, want 32 or 64 bytes")]
+  InvalidKeyFileSize { got: usize },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -52,15 +55,19 @@ impl Node {
         signing_key: Arc::new(SigningKey::from_bytes(&random_key_bytes())),
       });
     }
-    if let Ok(data) = tokio::fs::read(key_path).await
-      && (data.len() == 32 || data.len() == 64)
-    {
-      let Ok(bytes) = <[u8; 32]>::try_from(&data[..32]) else {
-        return Err(MeshError::InvalidSignature);
-      };
-      return Ok(Self {
-        signing_key: Arc::new(SigningKey::from_bytes(&bytes)),
-      });
+    match tokio::fs::read(key_path).await {
+      Ok(data) => {
+        if data.len() != 32 && data.len() != 64 {
+          return Err(MeshError::InvalidKeyFileSize { got: data.len() });
+        }
+        let bytes = <[u8; 32]>::try_from(&data[..32])
+          .map_err(|_| MeshError::InvalidSignature)?;
+        return Ok(Self {
+          signing_key: Arc::new(SigningKey::from_bytes(&bytes)),
+        });
+      },
+      Err(err) if err.kind() == std::io::ErrorKind::NotFound => {},
+      Err(err) => return Err(MeshError::Io(err)),
     }
     if let Some(parent) = Path::new(key_path).parent() {
       tokio::fs::create_dir_all(parent).await?;
@@ -196,7 +203,7 @@ pub async fn run_gossip_loop(
     tokio::select! {
         _ = stop.changed() => return,
         _ = ticker.tick() => {
-            let Ok(routes) = db.list_recent_routes(100).await else { continue; };
+            let Ok(routes) = db.list_recent_routes(MAX_GOSSIP_ROUTES).await else { continue; };
             if routes.is_empty() { continue; }
             for peer in &peers {
                 let peer = peer.clone();

@@ -66,19 +66,22 @@ struct ProberInner {
 }
 
 impl Prober {
-  #[must_use]
-  pub fn new(alpha: f64) -> Self {
-    Self {
+  /// Create a prober with the given exponential moving average alpha.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the HTTP client cannot be constructed.
+  pub fn new(alpha: f64) -> Result<Self, reqwest::Error> {
+    Ok(Self {
       inner: Arc::new(ProberInner {
         alpha,
         table: RwLock::new(HashMap::new()),
         client: reqwest::Client::builder()
           .timeout(Duration::from_secs(10))
-          .build()
-          .unwrap_or_else(|_| reqwest::Client::new()),
+          .build()?,
         persist_health: RwLock::new(None),
       }),
-    }
+    })
   }
 
   pub async fn init_upstreams(&self, upstreams: &[UpstreamConfig]) {
@@ -147,9 +150,7 @@ impl Prober {
     };
     let callback = self.inner.persist_health.read().await.clone();
     if let Some(callback) = callback {
-      tokio::spawn(async move {
-        callback(snapshot.0, snapshot.1, snapshot.2, snapshot.3);
-      });
+      callback(snapshot.0, snapshot.1, snapshot.2, snapshot.3);
     }
   }
 
@@ -171,9 +172,7 @@ impl Prober {
     };
     let callback = self.inner.persist_health.read().await.clone();
     if let Some(callback) = callback {
-      tokio::spawn(async move {
-        callback(snapshot.0, snapshot.1, snapshot.2, snapshot.3);
-      });
+      callback(snapshot.0, snapshot.1, snapshot.2, snapshot.3);
     }
   }
 
@@ -201,6 +200,11 @@ impl Prober {
         && a.priority != b.priority
       {
         return a.priority.cmp(&b.priority);
+      }
+      match (a.ema_latency == 0.0, b.ema_latency == 0.0) {
+        (true, false) => return Ordering::Greater,
+        (false, true) => return Ordering::Less,
+        _ => {},
       }
       a.ema_latency
         .partial_cmp(&b.ema_latency)
@@ -287,7 +291,7 @@ mod tests {
   #[tokio::test]
   async fn ema_and_status_progression() -> Result<(), Box<dyn std::error::Error>>
   {
-    let p = Prober::new(0.3);
+    let p = Prober::new(0.3)?;
     p.add_upstream("https://example.com".into(), 1).await;
     p.record_latency("https://example.com", 100.0).await;
     p.record_latency("https://example.com", 50.0).await;
