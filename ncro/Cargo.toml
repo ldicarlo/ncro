@@ -1,8 +1,11 @@
 [package]
-name              = "ncro"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+name                  = "ncro"
+version.workspace     = true
+edition.workspace     = true
+license.workspace     = true
+description.workspace = true
+homepage.workspace    = true
+repository.workspace  = true
 
 [dependencies]
 anyhow.workspace   = true

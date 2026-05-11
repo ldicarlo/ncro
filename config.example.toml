@@ -1,39 +1,39 @@
 [server]
-listen = ":8080"
-read_timeout = "30s"
+listen        = ":8080"
+read_timeout  = "30s"
 write_timeout = "30s"
 
 [[upstreams]]
-url = "https://cache.nixos.org"
-priority = 10
+priority   = 10
 public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+url        = "https://cache.nixos.org"
 
 # Try without a public key.
 [[upstreams]]
-url = "https://nix-community.cachix.org"
 priority = 20
+url      = "https://nix-community.cachix.org"
 
 [cache]
-db_path = "/var/lib/ncro/routes.db"
-max_entries = 100000
-ttl = "1h"
-negative_ttl = "10m"
+db_path       = "/var/lib/ncro/routes.db"
 latency_alpha = 0.3
+max_entries   = 100000
+negative_ttl  = "10m"
+ttl           = "1h"
 
 [discovery]
-enabled = false
-service_name = "_nix-serve._tcp"
-domain = "local"
 discovery_time = "5s"
-priority = 20
+domain         = "local"
+enabled        = false
+priority       = 20
+service_name   = "_nix-serve._tcp"
 
 [mesh]
-enabled = false
-bind_addr = "0.0.0.0:7946"
-peers = []
-private_key = "/etc/ncro/node.key"
+bind_addr       = "0.0.0.0:7946"
+enabled         = false
 gossip_interval = "30s"
+peers           = [  ]
+private_key     = "/etc/ncro/node.key"
 
 [logging]
-level = "info"
 format = "json"
+level  = "info"

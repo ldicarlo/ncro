@@ -32,7 +32,7 @@ pub struct RouteEntry {
 }
 
 impl RouteEntry {
-  #[must_use] 
+  #[must_use]
   pub fn is_valid(&self) -> bool {
     Utc::now() < self.ttl
   }

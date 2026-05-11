@@ -16,7 +16,7 @@ pub enum Status {
 }
 
 impl Status {
-  #[must_use] 
+  #[must_use]
   pub const fn as_str(self) -> &'static str {
     match self {
       Self::Active => "ACTIVE",
@@ -66,7 +66,7 @@ struct ProberInner {
 }
 
 impl Prober {
-  #[must_use] 
+  #[must_use]
   pub fn new(alpha: f64) -> Self {
     Self {
       inner: Arc::new(ProberInner {
