@@ -16,7 +16,7 @@ ncro-metrics.workspace = true
 ncro-narinfo.workspace = true
 reqwest                = { workspace = true, features = [ "rustls" ] }
 thiserror.workspace    = true
-tokio                  = { workspace = true, features = [ "sync", "time", "rt" ] }
+tokio                  = { workspace = true, features = [ "macros", "sync", "time", "rt" ] }
 tracing.workspace      = true
 
 [lints]
