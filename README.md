@@ -267,3 +267,18 @@ $ cargo build --release
 $ nix develop
 $ cargo test
 ```
+
+## License
+
+<!--markdownlint-disable MD033 MD059-->
+
+ncro is made available under Mozilla Public License (MPL) version 2.0. See
+[LICENSE](LICENSE) for more details on the exact conditions. An online copy is
+provided [here](https://www.mozilla.org/en-US/MPL/2.0/).
+
+<div align="right">
+  <a href="#doc-begin">Back to the Top</a>
+  <br/>
+</div>
+
+<!--markdownlint-enable MD033 MD059-->
