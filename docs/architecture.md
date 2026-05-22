@@ -40,9 +40,42 @@ sequenceDiagram
   N-->>C: response
 ```
 
+NAR streaming, on another hand, follows a different path. There is actually no
+race and when a client requests `/nar/<hash>.nar`, ncro looks up the route for
+the corresponding narinfo hash. _If_ a route exists, it opens a connection to
+the winning upstream and streams the response body directly to the client
+without buffering to disk. If no route exists, it tries upstreams in latency
+order, falling through on 404 until one succeeds.
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant N as ncro
+  participant U as Upstreams
+
+  C->>N: GET /nar/<hash>.nar
+  N->>U: try upstreams in latency order
+  alt upstream has the NAR
+    U-->>N: 200 + stream
+    N-->>C: stream (zero copy)
+  else upstream returns 404
+    N->>U: try next upstream
+  end
+```
+
 Background health probes keep latency estimates current by calling
-`HEAD /nix-cache-info` on a timer. The health layer uses EMA smoothing, so a
-single bad probe does not immediately dominate the routing decision.
+`HEAD /nix-cache-info` every 30 seconds. The health layer uses Exponentially
+Weighted Moving Average (EMA) smoothing, so a single bad probe does not
+immediately dominate the routing decision:
+
+$$
+L_t = \alpha \cdot R_t + (1 - \alpha) \cdot L_{t-1}
+$$
+
+Where $R_t$ is the latest observed latency, $L_t$ is the new estimate, and
+`alpha` (`cache.latency_alpha`, default `0.3`) controls how quickly the estimate
+adapts. Higher values react faster to real changes; lower values filter out
+noise.
 
 ```mermaid
 flowchart TD
@@ -53,15 +86,22 @@ flowchart TD
 ```
 
 Selection is driven by latency first. When two upstreams are effectively tied,
-`priority` breaks the tie. The router also tracks failures and probe volume so it
-can distinguish a briefly slow cache from one that is trending unhealthy.
+`priority` breaks the tie. The router also tracks failures and probe volume so
+it can distinguish a briefly slow cache from one that is trending unhealthy.
 
-Persistence is intentionally narrow. SQLite stores route decisions and health
-snapshots so a restart does not force ncro to relearn everything from scratch.
+> [!TIP]
+> Persistence is intentionally narrow. SQLite stores two kinds of data so a
+> restart does not force ncro to relearn everything from scratch.
+
+First type of stored data is **route entries**, a mapping from narinfo hash to
+the winning upstream URL, stored with a creation timestamp and TTL. When the
+cache exceeds `max_entries`, the least recently used entry is evicted first.
+**Health snapshots** on another hand are per-upstream EMA latency estimates and
+failure counts, refreshed by the background probe loop.
 
 Discovery and mesh are optional extensions. Discovery can add peers from the
 local network, while mesh gossip shares recent route decisions across trusted
-nodes using signed UDP packets.
+nodes using signed UDP packets. Consider:
 
 ```mermaid
 flowchart LR
@@ -73,15 +113,17 @@ flowchart LR
 ```
 
 At runtime, ncro loads config, validates it, opens SQLite, seeds health state,
-starts background loops, and finally binds the HTTP listener. Shutdown is driven
+starts background loops, and finally binds the HTTP listener. The HTTP server
+and all background tasks run on tokio's async runtime, allowing concurrent
+upstream connections without thread-per-connection overhead. Shutdown is driven
 by the normal process termination path and background work is told to stop
 gracefully.
 
 ## Configuration Reference
 
 The most important settings are `upstreams`, `server.listen`, `cache.db_path`,
-`cache.ttl`, `cache.negative_ttl`, `cache.latency_alpha`, `server.cache_priority`,
-`discovery.enabled`, and `mesh.enabled`.
+`cache.ttl`, `cache.negative_ttl`, `cache.latency_alpha`,
+`server.cache_priority`, `discovery.enabled`, and `mesh.enabled`.
 
 `upstreams` defines the cache backends ncro can use. Each upstream can carry a
 `priority` value and an optional `public_key` for mesh verification.
