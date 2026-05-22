@@ -1,4 +1,20 @@
-# ncro - Nix Cache Route Optimizer
+<!-- markdownlint-disable MD033 MD041 -->
+
+<div id="doc-begin" align="center">
+  <h1 id="header">
+    <pre>ncro</pre>
+  </h1>
+  <p>
+    <b>N</b>ix <b>C</b>ache <b>R</b>oute <b>O</b>ptimizer
+  </p>
+  <br/>
+  <a href="#synopsis">Synopsis</a><br/>
+  <a href="#quick-start">Quick Start</a> | <a href="#configuration">configuration</a><br/>
+  <a href="#hacking">Contributing</a>
+  <br/>
+</div>
+
+## Synopsis
 
 `ncro` (pronounced Necro) is a lightweight HTTP proxy, inspired by Squid and
 several other projects in the same domain, optimized for Nix binary cache
@@ -14,7 +30,23 @@ repeated downloads of the same NAR always hit an upstream, but routing decisions
 (which upstream to use) are cached and reused. Though, this is _desirable_ for
 what ncro aims to be. The optimization goal is extremely domain-specific.
 
-## How It Works
+### Motivation
+
+During a Nix build, binaries are downloaded from configured substituters, also
+known as binary caches. When multiple caches serve the same paths or you have
+multiple caches configured in your Nix setup, there is additional wait time and
+overhead to every build. ncro solves this by acting as an _intelligent local
+proxy_ that measures upstream latency in real time and routes each request to
+the fastest responder. To keep ncro small and lightweight, routing metadata is
+persisted on disk; NAR content is streamed through with zero local storage. This
+keeps the proxy stateless on the data path and eliminates cache-invalidation
+complexity.
+
+[architechture document]: ./docs/architecture.md
+
+For a deeper look at the system design, see the [architechture document].
+
+### How It Works
 
 ```mermaid
 flowchart TD
@@ -36,20 +68,34 @@ flowchart TD
     K --> A
 ```
 
-The request flow is quite simplistic:
+The request flow follows two distinct paths depending on the request type:
+
+### Narinfo Lookups
 
 1. Nix requests `/<hash>.narinfo`
-2. ncro checks SQLite route cache; on hit, re-fetches from cached upstream
-3. On miss, races HEAD requests to all configured upstreams in parallel
-4. Fastest responding upstream wins; narinfo body is fetched and returned
-   directly
-5. Route is persisted with TTL; subsequent requests use the cache
+2. ncro checks the SQLite route cache; on a hit, it re-fetches from the cached
+   upstream without probing others
+3. On a miss, it races HEAD requests to all configured upstreams in parallel
+4. The fastest upstream wins; the full narinfo body is fetched from that
+   upstream and returned to the client
+5. The winning route is persisted with a configurable TTL; subsequent requests
+   for the same hash use the cached route directly
 
-[architechture reference]: ./docs/architecture.md
+### NAR Streaming
+
+1. Nix requests `/nar/<hash>.nar`
+2. ncro looks up the route for the corresponding narinfo hash; if no route is
+   found (e.g. the narinfo was requested directly from an upstream), it tries
+   upstreams in latency order
+3. The NAR body is streamed chunk-by-chunk from the selected upstream to the
+   client with zero buffering on disk
+4. If the upstream returns 404, ncro falls through to the next upstream in
+   latency order
+5. After all upstreams are exhausted with no success, a 404 is returned
 
 Background probes (`HEAD /nix-cache-info`) run every 30 seconds to keep latency
-measurements current and detect unhealthy upstreams. You may find additional
-details on the project architecture in the [architechture reference]. .
+measurements current and detect unhealthy upstreams. System design is covered
+further in the [architechture document].
 
 ### Runtime Endpoints
 
@@ -61,12 +107,19 @@ details on the project architecture in the [architechture reference]. .
 
 ### Routing Notes
 
-- Route cache decisions are stored in SQLite and reused until they expire.
-- Lower latency wins; when two upstreams are within 10% of each other, the lower
-  `priority` value wins.
-- Background probes update latency even when no client traffic is flowing.
-- If an upstream is missing from the cache, ncro races all configured upstreams
-  in parallel and uses the first successful response.
+- Route cache decisions are stored in SQLite and reused until their TTL expires
+  (or they are evicted by the LRU policy when `max_entries` is reached).
+- Latency is tracked using an Exponentially Weighted Moving Average (EMA) with a
+  configurable smoothing factor (`cache.latency_alpha`, default 0.3). Higher
+  alpha values react faster to changes; lower values filter out measurement
+  noise.
+- Lower latency wins the race. When two upstreams are within 10% of each other,
+  the lower `priority` value acts as a tiebreaker.
+- Background probes (`HEAD /nix-cache-info`) update latency estimates every 30
+  seconds even when no client traffic is flowing, ensuring warm routing data.
+- On a cache miss, ncro races all configured upstreams in parallel and returns
+  the first successful response. Unhealthy upstreams (detected by consecutive
+  probe failures) are excluded from the race until they recover.
 
 ## Quick Start
 
@@ -253,6 +306,11 @@ Prometheus metrics are available at `/metrics`.
   is reachable from your Nix clients.
 
 ## Hacking
+
+This project is built with NixOS in mind and naturally the primary means of
+working on this project is using Nix for a reproducible developer environment.
+Use `nix develop` to enter a development shell, or `direnv allow` to use the
+provided `.envrc` if you use [Direnv](https://direnv.net).
 
 ### Building
 
