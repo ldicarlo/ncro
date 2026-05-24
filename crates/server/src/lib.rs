@@ -53,7 +53,7 @@ pub fn app(
       .route("/nix-cache-info", get(cache_info).head(cache_info))
       .route("/health", get(health))
       .route("/metrics", get(metrics_endpoint))
-      .route("/{hash}.narinfo", get(narinfo).head(narinfo))
+      .route("/{hash_narinfo}", get(narinfo).head(narinfo))
       .route("/nar/{*path}", get(nar).head(nar))
       .with_state(Arc::new(state)),
   )
@@ -122,14 +122,17 @@ async fn metrics_endpoint() -> Response {
 
 async fn narinfo(
   State(state): State<Arc<AppState>>,
-  Path(hash): Path<String>,
+  Path(hash_narinfo): Path<String>,
   req: Request<Body>,
 ) -> Response {
+  let Some(hash) = hash_narinfo.strip_suffix(".narinfo") else {
+    return StatusCode::NOT_FOUND.into_response();
+  };
   let candidates = upstream_urls(&state).await;
-  match state.router.resolve(&hash, &candidates).await {
+  match state.router.resolve(hash, &candidates).await {
     Ok(result) => {
       tracing::info!(
-        hash,
+        hash = hash,
         upstream = result.url,
         cache_hit = result.cache_hit,
         latency_ms = result.latency_ms,
