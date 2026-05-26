@@ -36,24 +36,22 @@
       enabled = true;
       service_name = "_nix-serve._tcp";
       domain = "local";
+
       # Short window so the test does not have to wait too long.  Stale
       # entries are evicted after discovery_time * 3 = 15 s.
       discovery_time = "5s";
       priority = 10;
+
+      # nix-serve binds to 0.0.0.0 (IPv4 only); restrict discovery to IPv4
+      # addresses so ncro does not register unreachable IPv6 upstreams.
+      address_family = "ipv4";
     };
   };
 
   # Shared avahi configuration. Firewall is disabled so avahi multicast
   # traffic crosses the virtual network without impediment.
-  #
-  # IPv6 is disabled so avahi only publishes IPv4 A records and only uses
-  # IPv4 mDNS multicast. nix-serve binds to 0.0.0.0 (IPv4 only), so ncro
-  # must discover IPv4 addresses to reach it. With IPv6 enabled, avahi would
-  # also publish AAAA records which ncro would attempt first, causing
-  # connection failures.
   commonAvahi = {
     enable = true;
-    ipv6 = false;
     nssmdns4 = true;
     publish = {
       enable = true;
@@ -481,10 +479,11 @@ in
           node2_upstreams_after = ncro_upstream_urls(node2)
           print(f"node2 upstreams after node1 avahi stopped: {node2_upstreams_after}")
 
-          # node1's nix-serve URL must no longer be listed.
-          node1_ip = node1.succeed("hostname -I").strip().split()[0]
-          assert not any(node1_ip in u for u in node2_upstreams_after), \
-              f"node1 IP still present in node2 upstreams: {node2_upstreams_after}"
+          # All of node1's upstream URLs (one per advertised address) must be gone.
+          node1_ips = node1.succeed("hostname -I").strip().split()
+          for ip in node1_ips:
+              assert not any(ip in u for u in node2_upstreams_after), \
+                  f"node1 IP {ip!r} still in node2 upstreams after stale eviction: {node2_upstreams_after}"
 
       with subtest("node2 can still fetch through node3 after node1 leaves"):
           # Remove the path from node2 so we force a fresh fetch.
