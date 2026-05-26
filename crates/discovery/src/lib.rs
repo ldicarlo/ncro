@@ -69,7 +69,14 @@ impl Discovery {
           }
           event = event_rx.recv() => {
               if let Some(ServiceEvent::ServiceResolved(info)) = event {
-                  let Some(addr) = info.get_addresses().iter().next().map(mdns_sd::ScopedIp::to_ip_addr) else { continue; };
+                  let Some(addr) = info
+                      .get_addresses()
+                      .iter()
+                      .map(mdns_sd::ScopedIp::to_ip_addr)
+                      .find(|ip| !ip.is_loopback() && !ip.is_unspecified())
+                  else {
+                      continue;
+                  };
                   let url = format!("http://{}", std::net::SocketAddr::new(addr, info.get_port()));
                   let key = info.get_fullname().to_string();
                   let is_new = peers.lock().await.insert(key, (url.clone(), Instant::now())).is_none();
