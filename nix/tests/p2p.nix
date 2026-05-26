@@ -36,10 +36,15 @@
       enabled = true;
       service_name = "_nix-serve._tcp";
       domain = "local";
+
       # Short window so the test does not have to wait too long.  Stale
       # entries are evicted after discovery_time * 3 = 15 s.
       discovery_time = "5s";
       priority = 10;
+
+      # nix-serve binds to 0.0.0.0 (IPv4 only); restrict discovery to IPv4
+      # addresses so ncro does not register unreachable IPv6 upstreams.
+      address_family = "ipv4";
     };
   };
 
@@ -376,8 +381,48 @@ in
           )
 
           # node1 should have discovered node3 (its own nix-serve is not a remote peer).
-          node1_upstreams = wait_for_upstreams(node1, min_count=2, timeout=90)
+          # node1 static: 127.0.0.1:5000 + cache.nixos.org; discovered: node3 -> >=3.
+          node1_upstreams = wait_for_upstreams(node1, min_count=3, timeout=90)
           print(f"node1 upstreams after discovery: {node1_upstreams}")
+
+          # node3 should have discovered node1.
+          # node3 static: 127.0.0.1:5000 + cache.nixos.org; discovered: node1 -> >=3.
+          node3_upstreams = wait_for_upstreams(node3, min_count=3, timeout=90)
+          print(f"node3 upstreams after discovery: {node3_upstreams}")
+
+      with subtest("mDNS: discovered upstream URLs use routable addresses"):
+          # Avahi publishes all host addresses including loopback (127.0.0.1,
+          # ::1). ncro must filter these: using them would route requests to
+          # the requesting node's own loopback instead of the remote nix-serve.
+          for node, upstreams in ((node2, node2_upstreams), (node1, node1_upstreams), (node3, node3_upstreams)):
+              for url in upstreams:
+                  # Static 127.0.0.1:5000 on node1/node3 is intentional; skip it.
+                  if url == "http://127.0.0.1:5000":
+                      continue
+                  assert "127.0.0.1" not in url, \
+                      f"{node.name}: discovered upstream contains loopback IPv4: {url!r}"
+                  assert "[::1]" not in url, \
+                      f"{node.name}: discovered upstream contains loopback IPv6: {url!r}"
+
+      with subtest("mDNS: discovered upstream URLs use the advertised port"):
+          # The avahi service file advertises port 5000.  ncro must use the
+          # port from the mDNS record, not a hardcoded or default value.
+          for node, upstreams in ((node2, node2_upstreams), (node1, node1_upstreams), (node3, node3_upstreams)):
+              for url in upstreams:
+                  if "cache.nixos.org" in url:
+                      continue
+                  assert ":5000" in url or url.endswith(":443"), \
+                      f"{node.name}: discovered upstream does not use port 5000: {url!r}"
+
+      with subtest("mDNS: cross-node discovery is symmetric"):
+          # node1 must have discovered node3, and node3 must have discovered
+          # node1.  Both advertise nix-serve; neither should be missing.
+          node1_discovered = [u for u in node1_upstreams if "cache.nixos.org" not in u and u != "http://127.0.0.1:5000"]
+          node3_discovered = [u for u in node3_upstreams if "cache.nixos.org" not in u and u != "http://127.0.0.1:5000"]
+          assert len(node1_discovered) >= 1, \
+              f"node1 did not discover any peers: {node1_upstreams}"
+          assert len(node3_discovered) >= 1, \
+              f"node3 did not discover any peers: {node3_upstreams}"
 
       with subtest("verify narinfo is served by ncro"):
           test_store_path = "${testStorePath}"
@@ -434,10 +479,11 @@ in
           node2_upstreams_after = ncro_upstream_urls(node2)
           print(f"node2 upstreams after node1 avahi stopped: {node2_upstreams_after}")
 
-          # node1's nix-serve URL must no longer be listed.
-          node1_ip = node1.succeed("hostname -I").strip().split()[0]
-          assert not any(node1_ip in u for u in node2_upstreams_after), \
-              f"node1 IP still present in node2 upstreams: {node2_upstreams_after}"
+          # All of node1's upstream URLs (one per advertised address) must be gone.
+          node1_ips = node1.succeed("hostname -I").strip().split()
+          for ip in node1_ips:
+              assert not any(ip in u for u in node2_upstreams_after), \
+                  f"node1 IP {ip!r} still in node2 upstreams after stale eviction: {node2_upstreams_after}"
 
       with subtest("node2 can still fetch through node3 after node1 leaves"):
           # Remove the path from node2 so we force a fresh fetch.

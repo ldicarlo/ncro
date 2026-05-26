@@ -175,6 +175,22 @@ impl Default for MeshConfig {
   }
 }
 
+/// Which address families to use when registering mDNS-discovered peers.
+///
+/// A discovered service may advertise multiple addresses (IPv4 and IPv6).
+/// This option controls which are registered as upstreams.  `any` (default)
+/// registers all routable addresses and lets the router race them; set `ipv4`
+/// or `ipv6` to restrict to a single family when the upstream server is known
+/// to only listen on one (e.g. nix-serve binds to 0.0.0.0 by default).
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AddressFamily {
+  #[default]
+  Any,
+  Ipv4,
+  Ipv6,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct DiscoveryConfig {
@@ -183,6 +199,7 @@ pub struct DiscoveryConfig {
   pub domain:         String,
   pub discovery_time: HumanDuration,
   pub priority:       i32,
+  pub address_family: AddressFamily,
 }
 
 impl Default for DiscoveryConfig {
@@ -193,6 +210,7 @@ impl Default for DiscoveryConfig {
       domain:         "local".to_string(),
       discovery_time: HumanDuration(Duration::from_secs(5)),
       priority:       20,
+      address_family: AddressFamily::default(),
     }
   }
 }

@@ -8,29 +8,52 @@
   }: let
     systems = ["x86_64-linux" "aarch64-linux"];
     forEachSystem = nixpkgs.lib.genAttrs systems;
-    pkgsForEach = nixpkgs.legacyPackages;
+    pkgsForEach = system: nixpkgs.legacyPackages.${system};
   in {
-    packages = forEachSystem (system: {
-      ncro = pkgsForEach.${system}.callPackage ./nix/package.nix {};
-      default = self.packages.${system}.ncro;
-    });
-
-    devShells = forEachSystem (system: {
-      default = pkgsForEach.${system}.callPackage ./nix/shell.nix {};
-    });
-
     nixosModules = {
       ncro = ./nix/module.nix;
       default = self.nixosModules.ncro;
     };
 
-    hydraJobs = self.packages;
-
-    checks = forEachSystem (system: {
-      p2p-discovery = import ./nix/tests/p2p.nix {
-        pkgs = pkgsForEach.${system};
-        inherit self;
-      };
+    packages = forEachSystem (system: let
+      pkgs = pkgsForEach system;
+    in {
+      ncro = pkgs.callPackage ./nix/package.nix {};
+      default = self.packages.${system}.ncro;
     });
+
+    devShells = forEachSystem (system: let
+      pkgs = pkgsForEach system;
+    in {
+      default = pkgs.callPackage ./nix/shell.nix {};
+    });
+
+    checks = forEachSystem (system: let
+      pkgs = pkgsForEach system;
+    in {
+      p2p-discovery = pkgs.callPackage ./nix/tests/p2p.nix {inherit self;};
+      e2e = pkgs.callPackage ./nix/tests/e2e.nix {inherit self;};
+    });
+
+    # Provides the default formatter for 'nix fmt'.
+    formatter = forEachSystem (
+      system: let
+        pkgs = pkgsForEach system;
+      in
+        pkgs.writeShellApplication {
+          name = "nix3-fmt-wrapper";
+          runtimeInputs = [
+            pkgs.alejandra
+            pkgs.fd
+          ];
+
+          text = ''
+            # Format Nix files with nixfmt
+            fd "$@" -t f -e nix -x alejandra -q '{}'
+          '';
+        }
+    );
+
+    hydraJobs = self.packages;
   };
 }

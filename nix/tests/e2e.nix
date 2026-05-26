@@ -1,0 +1,345 @@
+{
+  pkgs,
+  self,
+}: let
+  # Two distinct payloads. One is served by nix-serve-ng, and the other is served
+  # by harmonia. We embed distinct strings so we can verify which backend actually
+  # served each in tests
+  payload1 = pkgs.runCommandLocal "ncro-e2e-payload1" {} ''
+    mkdir -p "$out"
+    echo "e2e payload 1: nix-serve-ng backend" > "$out/data"
+  '';
+
+  payload2 = pkgs.runCommandLocal "ncro-e2e-payload2" {} ''
+    mkdir -p "$out"
+    echo "e2e payload 2: harmonia backend" > "$out/data"
+  '';
+
+  cacheKey1Name = "ncro-e2e-cache1";
+  cacheKey2Name = "ncro-e2e-cache2";
+
+  # Shared NixOS module applied to every node.
+  commonBase = {
+    virtualisation.memorySize = 1024;
+    virtualisation.diskSize = 4096;
+    networking.firewall.enable = false;
+    nix.settings.experimental-features = ["nix-command"];
+  };
+in
+  pkgs.testers.runNixOSTest {
+    name = "ncro-e2e";
+
+    nodes = {
+      # Runs nix-serve-ng. Generates a signing key at boot, signs payload1,
+      # then starts the server.
+      bincache1 = {
+        config,
+        pkgs,
+        ...
+      }: {
+        imports = [commonBase];
+
+        system.extraDependencies = [payload1];
+
+        systemd.services.setup-cache = {
+          description = "Generate signing key and sign e2e payload 1";
+          wantedBy = ["multi-user.target"];
+          before = ["nix-serve-ng.service"];
+          after = ["nix-daemon.service"];
+          requires = ["nix-daemon.service"];
+          serviceConfig = {
+            Type = "oneshot";
+            RemainAfterExit = true;
+            ExecStart = pkgs.writeShellScript "setup-cache1" ''
+              set -euo pipefail
+              mkdir -p /etc/nix
+              if [ ! -f /etc/nix/cache-key.sec ]; then
+                ${config.nix.package}/bin/nix-store \
+                  --generate-binary-cache-key "${cacheKey1Name}" \
+                  /etc/nix/cache-key.sec \
+                  /etc/nix/cache-key.pub
+              fi
+              # World-readable so the server process can read it.
+              chmod 644 /etc/nix/cache-key.pub /etc/nix/cache-key.sec
+              ${config.nix.package}/bin/nix store sign \
+                --key-file /etc/nix/cache-key.sec \
+                "${payload1}"
+            '';
+          };
+        };
+
+        # nix-serve-ng's mainProgram is "nix-serve"; signing key via env var.
+        # FIXME: probably could use the NixOS option here
+        systemd.services.nix-serve-ng = {
+          description = "nix-serve-ng binary cache";
+          wantedBy = ["multi-user.target"];
+          after = ["setup-cache.service" "network.target"];
+          requires = ["setup-cache.service"];
+          environment.NIX_SECRET_KEY_FILE = "/etc/nix/cache-key.sec";
+          serviceConfig = {
+            ExecStart = "${pkgs.nix-serve-ng}/bin/nix-serve --port 5000";
+            Restart = "on-failure";
+          };
+        };
+      };
+
+      # Runs harmonia. Same key-generation + signing pattern; harmonia loads
+      # the key via systemd LoadCredential so chmod 644 is sufficient.
+      bincache2 = {
+        config,
+        pkgs,
+        lib,
+        ...
+      }: {
+        imports = [commonBase];
+
+        system.extraDependencies = [payload2];
+
+        systemd.services.setup-cache = {
+          description = "Generate signing key and sign e2e payload 2";
+          wantedBy = ["multi-user.target"];
+          before = ["harmonia.service"];
+          after = ["nix-daemon.service"];
+          requires = ["nix-daemon.service"];
+          serviceConfig = {
+            Type = "oneshot";
+            RemainAfterExit = true;
+            ExecStart = pkgs.writeShellScript "setup-cache2" ''
+              set -euo pipefail
+              mkdir -p /etc/nix
+              if [ ! -f /etc/nix/cache-key.sec ]; then
+                ${config.nix.package}/bin/nix-store \
+                  --generate-binary-cache-key "${cacheKey2Name}" \
+                  /etc/nix/cache-key.sec \
+                  /etc/nix/cache-key.pub
+              fi
+              chmod 644 /etc/nix/cache-key.pub /etc/nix/cache-key.sec
+              ${config.nix.package}/bin/nix store sign \
+                --key-file /etc/nix/cache-key.sec \
+                "${payload2}"
+            '';
+          };
+        };
+
+        services.harmonia.cache = {
+          enable = true;
+          signKeyPaths = ["/etc/nix/cache-key.sec"];
+        };
+
+        # Start harmonia eagerly (not lazily via socket activation) and
+        # only after the signing key is ready.
+        systemd.services.harmonia = {
+          wantedBy = ["multi-user.target"];
+          after = lib.mkAfter ["setup-cache.service"];
+          requires = ["setup-cache.service"];
+        };
+      };
+
+      # First ncro instance. Proxies to both binary caches.
+      host = {...}: {
+        imports = [self.nixosModules.ncro commonBase];
+
+        nix.settings.trusted-substituters = ["http://localhost:8080"];
+
+        services.ncro = {
+          enable = true;
+          settings = {
+            server.listen = ":8080";
+            upstreams = [
+              {
+                url = "http://bincache1:5000";
+                priority = 1;
+              }
+              {
+                url = "http://bincache2:5000";
+                priority = 2;
+              }
+            ];
+
+            cache = {
+              ttl = "5m";
+              negative_ttl = "30s";
+            };
+          };
+        };
+      };
+
+      # Second ncro instance. Proxies exclusively through host's ncro,
+      # exercising the two-hop path:
+      # secondary --> host --> bincache.
+      secondary = {...}: {
+        imports = [self.nixosModules.ncro commonBase];
+
+        nix.settings.trusted-substituters = ["http://localhost:8080"];
+
+        services.ncro = {
+          enable = true;
+          settings = {
+            server.listen = ":8080";
+            upstreams = [
+              {
+                url = "http://host:8080";
+                priority = 1;
+              }
+            ];
+            cache = {
+              ttl = "5m";
+              negative_ttl = "30s";
+            };
+          };
+        };
+      };
+    };
+
+    testScript = ''
+      import json
+
+      def ncro_health(node):
+          out = node.succeed("curl -sf http://localhost:8080/health")
+          return json.loads(out)
+
+      def store_hash(path):
+          # /nix/store/<hash>-<name> → <hash>
+          return path.split("/")[3].split("-")[0]
+
+      payload1_path = "${payload1}"
+      payload2_path = "${payload2}"
+      hash1 = store_hash(payload1_path)
+      hash2 = store_hash(payload2_path)
+
+      with subtest("boot all nodes"):
+          start_all()
+
+          bincache1.wait_for_unit("setup-cache.service")
+          bincache1.wait_for_unit("nix-serve-ng.service")
+          bincache1.wait_for_open_port(5000)
+
+          bincache2.wait_for_unit("setup-cache.service")
+          bincache2.wait_for_unit("harmonia.service")
+          bincache2.wait_for_open_port(5000)
+
+          host.wait_for_unit("ncro.service")
+          host.wait_for_open_port(8080)
+
+          secondary.wait_for_unit("ncro.service")
+          secondary.wait_for_open_port(8080)
+
+      with subtest("binary caches serve nix-cache-info"):
+          for node, port in ((bincache1, 5000), (bincache2, 5000)):
+              out = node.succeed(f"curl -sf http://localhost:{port}/nix-cache-info")
+              assert "StoreDir" in out, \
+                  f"{node.name}: /nix-cache-info missing StoreDir: {out!r}"
+
+      with subtest("each cache backend serves its own payload narinfo directly"):
+          out1 = bincache1.succeed(f"curl -sf http://localhost:5000/{hash1}.narinfo")
+          assert "StorePath" in out1, \
+              f"bincache1 (nix-serve-ng) did not serve narinfo for hash1: {out1!r}"
+
+          out2 = bincache2.succeed(f"curl -sf http://localhost:5000/{hash2}.narinfo")
+          assert "StorePath" in out2, \
+              f"bincache2 (harmonia) did not serve narinfo for hash2: {out2!r}"
+
+      with subtest("cross-backend: each cache returns 404 for the other's payload"):
+          bincache1.fail(f"curl -sf http://localhost:5000/{hash2}.narinfo")
+          bincache2.fail(f"curl -sf http://localhost:5000/{hash1}.narinfo")
+
+      with subtest("host ncro proxies narinfo from nix-serve-ng backend"):
+          out = host.succeed(f"curl -sf http://localhost:8080/{hash1}.narinfo")
+          assert "StorePath" in out, \
+              f"host ncro did not proxy hash1 narinfo: {out!r}"
+
+      with subtest("host ncro proxies narinfo from harmonia backend"):
+          out = host.succeed(f"curl -sf http://localhost:8080/{hash2}.narinfo")
+          assert "StorePath" in out, \
+              f"host ncro did not proxy hash2 narinfo: {out!r}"
+
+      with subtest("secondary ncro proxies both narinfos through host (two-hop)"):
+          out1 = secondary.succeed(f"curl -sf http://localhost:8080/{hash1}.narinfo")
+          assert "StorePath" in out1, \
+              f"secondary did not proxy hash1 through host: {out1!r}"
+
+          out2 = secondary.succeed(f"curl -sf http://localhost:8080/{hash2}.narinfo")
+          assert "StorePath" in out2, \
+              f"secondary did not proxy hash2 through host: {out2!r}"
+
+      with subtest("nix copy payload1 (nix-serve-ng) through host ncro"):
+          host.fail(f"nix store ls {payload1_path} 2>/dev/null")
+          host.succeed(
+              f"nix copy --from http://localhost:8080 --no-require-sigs {payload1_path}"
+          )
+          host.succeed(f"test -f {payload1_path}/data")
+          host.succeed(f"grep -q 'nix-serve-ng' {payload1_path}/data")
+
+      with subtest("nix copy payload2 (harmonia) through host ncro"):
+          host.fail(f"nix store ls {payload2_path} 2>/dev/null")
+          host.succeed(
+              f"nix copy --from http://localhost:8080 --no-require-sigs {payload2_path}"
+          )
+          host.succeed(f"test -f {payload2_path}/data")
+          host.succeed(f"grep -q 'harmonia' {payload2_path}/data")
+
+      with subtest("nix copy both payloads through secondary ncro (two hops)"):
+          secondary.fail(f"nix store ls {payload1_path} 2>/dev/null")
+          secondary.succeed(
+              f"nix copy --from http://localhost:8080 --no-require-sigs {payload1_path}"
+          )
+          secondary.succeed(f"test -f {payload1_path}/data")
+          secondary.succeed(f"grep -q 'nix-serve-ng' {payload1_path}/data")
+
+          secondary.fail(f"nix store ls {payload2_path} 2>/dev/null")
+          secondary.succeed(
+              f"nix copy --from http://localhost:8080 --no-require-sigs {payload2_path}"
+          )
+          secondary.succeed(f"test -f {payload2_path}/data")
+          secondary.succeed(f"grep -q 'harmonia' {payload2_path}/data")
+
+      with subtest("host ncro records cache hits after repeated narinfo requests"):
+          # Both hashes were already fetched above; a second request should hit
+          # the in-memory or DB cache. Verify via the Prometheus metrics counter.
+          host.succeed(f"curl -sf http://localhost:8080/{hash1}.narinfo > /dev/null")
+          host.succeed(f"curl -sf http://localhost:8080/{hash2}.narinfo > /dev/null")
+          metrics = host.succeed("curl -sf http://localhost:8080/metrics")
+          assert "narinfo_cache_hits" in metrics, \
+              f"host ncro: cache hit metric not found in: {metrics[:300]!r}"
+
+      with subtest("host health endpoint lists both upstreams"):
+          h = ncro_health(host)
+          assert "status" in h and "upstreams" in h, \
+              f"host /health missing fields: {h!r}"
+          upstream_urls = [u["url"] for u in h["upstreams"]]
+          assert any("bincache1" in u for u in upstream_urls), \
+              f"bincache1 not in host upstreams: {upstream_urls}"
+          assert any("bincache2" in u for u in upstream_urls), \
+              f"bincache2 not in host upstreams: {upstream_urls}"
+
+      with subtest("secondary health endpoint lists host as upstream"):
+          h = ncro_health(secondary)
+          upstream_urls = [u["url"] for u in h.get("upstreams", [])]
+          assert any("host" in u for u in upstream_urls), \
+              f"host not in secondary upstreams: {upstream_urls}"
+
+      with subtest("metrics endpoint returns Prometheus format on both ncro nodes"):
+          for node in (host, secondary):
+              metrics = node.succeed("curl -sf http://localhost:8080/metrics")
+              assert "# TYPE" in metrics, \
+                  f"{node.name}: /metrics not in Prometheus format: {metrics[:200]!r}"
+
+      with subtest("resilience: payload2 still routed after bincache1 stops"):
+          # Stop bincache1 and wait until its port is gone so ncro hits a
+          # real connection error on the next request.
+          bincache1.execute("systemctl stop nix-serve-ng")
+          bincache1.wait_until_fails("curl -sf http://localhost:5000/nix-cache-info")
+
+          # payload2 lives only on bincache2. The router gets NetworkError
+          # from the priority-1 group (bincache1) and falls through to the
+          # priority-2 group (bincache2). Request must succeed nevertheless.
+          out = host.succeed(f"curl -sf http://localhost:8080/{hash2}.narinfo")
+          assert "StorePath" in out, \
+              f"host ncro lost payload2 routing after bincache1 went down: {out!r}"
+
+          # Verify the two-hop path (secondary -> host -> bincache2) holds too.
+          out = secondary.succeed(f"curl -sf http://localhost:8080/{hash2}.narinfo")
+          assert "StorePath" in out, \
+              f"secondary ncro lost payload2 routing after bincache1 went down: {out!r}"
+    '';
+  }
