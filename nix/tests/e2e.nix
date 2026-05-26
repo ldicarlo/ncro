@@ -323,5 +323,23 @@ in
               metrics = node.succeed("curl -sf http://localhost:8080/metrics")
               assert "# TYPE" in metrics, \
                   f"{node.name}: /metrics not in Prometheus format: {metrics[:200]!r}"
+
+      with subtest("resilience: payload2 still routed after bincache1 stops"):
+          # Stop bincache1 and wait until its port is gone so ncro hits a
+          # real connection error on the next request.
+          bincache1.execute("systemctl stop nix-serve-ng")
+          bincache1.wait_until_fails("curl -sf http://localhost:5000/nix-cache-info")
+
+          # payload2 lives only on bincache2. The router gets NetworkError
+          # from the priority-1 group (bincache1) and falls through to the
+          # priority-2 group (bincache2). Request must succeed nevertheless.
+          out = host.succeed(f"curl -sf http://localhost:8080/{hash2}.narinfo")
+          assert "StorePath" in out, \
+              f"host ncro lost payload2 routing after bincache1 went down: {out!r}"
+
+          # Verify the two-hop path (secondary -> host -> bincache2) holds too.
+          out = secondary.succeed(f"curl -sf http://localhost:8080/{hash2}.narinfo")
+          assert "StorePath" in out, \
+              f"secondary ncro lost payload2 routing after bincache1 went down: {out!r}"
     '';
   }
