@@ -45,8 +45,15 @@
 
   # Shared avahi configuration. Firewall is disabled so avahi multicast
   # traffic crosses the virtual network without impediment.
+  #
+  # IPv6 is disabled so avahi only publishes IPv4 A records and only uses
+  # IPv4 mDNS multicast. nix-serve binds to 0.0.0.0 (IPv4 only), so ncro
+  # must discover IPv4 addresses to reach it. With IPv6 enabled, avahi would
+  # also publish AAAA records which ncro would attempt first, causing
+  # connection failures.
   commonAvahi = {
     enable = true;
+    ipv6 = false;
     nssmdns4 = true;
     publish = {
       enable = true;
