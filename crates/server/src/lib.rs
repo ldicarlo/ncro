@@ -15,6 +15,7 @@ use ncro_db::Db;
 use ncro_health::{Prober, Status, UpstreamHealth};
 use ncro_router::{Router, RouterError};
 use serde::Serialize;
+use tower_http::timeout::{RequestBodyTimeoutLayer, ResponseBodyTimeoutLayer};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -37,6 +38,8 @@ pub fn app(
   db: Db,
   upstreams: Vec<UpstreamConfig>,
   cache_priority: i32,
+  read_timeout: std::time::Duration,
+  write_timeout: std::time::Duration,
 ) -> Result<AxumRouter, reqwest::Error> {
   let state = AppState {
     router,
@@ -44,7 +47,8 @@ pub fn app(
     db,
     upstreams,
     client: reqwest::Client::builder()
-      .timeout(std::time::Duration::from_secs(60))
+      .read_timeout(read_timeout)
+      .timeout(write_timeout)
       .build()?,
     cache_priority,
   };
@@ -55,6 +59,8 @@ pub fn app(
       .route("/metrics", get(metrics_endpoint))
       .route("/{hash_narinfo}", get(narinfo).head(narinfo))
       .route("/nar/{*path}", get(nar).head(nar))
+      .layer(RequestBodyTimeoutLayer::new(read_timeout))
+      .layer(ResponseBodyTimeoutLayer::new(write_timeout))
       .with_state(Arc::new(state)),
   )
 }

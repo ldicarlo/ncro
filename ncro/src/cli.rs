@@ -148,6 +148,8 @@ pub async fn run() -> anyhow::Result<()> {
     db,
     cfg.upstreams.clone(),
     cfg.server.cache_priority,
+    cfg.server.read_timeout.0,
+    cfg.server.write_timeout.0,
   )?;
   let listener =
     TcpListener::bind(normalize_listen(&cfg.server.listen)).await?;

@@ -1554,6 +1554,7 @@ dependencies = [
  "ncro-router",
  "reqwest",
  "serde",
+ "tower-http",
  "tracing",
 ]
 
@@ -2891,6 +2892,7 @@ dependencies = [
  "http",
  "http-body",
  "pin-project-lite",
+ "tokio",
  "tower",
  "tower-layer",
  "tower-service",

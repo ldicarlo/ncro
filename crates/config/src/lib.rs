@@ -70,6 +70,8 @@ pub struct UpstreamConfig {
 pub struct ServerConfig {
   pub listen:         String,
   pub cache_priority: i32,
+  pub read_timeout:   HumanDuration,
+  pub write_timeout:  HumanDuration,
 }
 
 impl Default for ServerConfig {
@@ -77,6 +79,8 @@ impl Default for ServerConfig {
     Self {
       listen:         ":8080".to_string(),
       cache_priority: 30,
+      read_timeout:   HumanDuration(Duration::from_secs(30)),
+      write_timeout:  HumanDuration(Duration::from_secs(30)),
     }
   }
 }
@@ -261,6 +265,16 @@ impl Config {
         "server.cache_priority must be >= 1, got {}",
         self.server.cache_priority
       )));
+    }
+    if self.server.read_timeout.0.is_zero() {
+      return Err(ConfigError::Validation(
+        "server.read_timeout must be positive".to_string(),
+      ));
+    }
+    if self.server.write_timeout.0.is_zero() {
+      return Err(ConfigError::Validation(
+        "server.write_timeout must be positive".to_string(),
+      ));
     }
     if self.cache.latency_alpha <= 0.0 || self.cache.latency_alpha >= 1.0 {
       return Err(ConfigError::Validation(format!(

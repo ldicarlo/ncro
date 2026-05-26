@@ -18,6 +18,7 @@ ncro-metrics.workspace = true
 ncro-router.workspace  = true
 reqwest                = { workspace = true, features = [ "rustls", "stream" ] }
 serde                  = { workspace = true, features = [ "derive" ] }
+tower-http.workspace   = true
 tracing.workspace      = true
 
 [lints]
