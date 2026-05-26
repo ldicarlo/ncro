@@ -9,15 +9,20 @@ use ncro_config::{AddressFamily, DiscoveryConfig};
 use ncro_health::Prober;
 use tokio::sync::{Mutex, mpsc, watch};
 
+/// fullname -> (list of upstream URLs for all routable addresses, last seen)
+type PeerMap = Arc<Mutex<HashMap<String, (Vec<String>, Instant)>>>;
+
 pub struct Discovery {
   cfg:    DiscoveryConfig,
   prober: Prober,
   daemon: ServiceDaemon,
-  // fullname → (list of upstream URLs for all routable addresses, last seen)
-  peers:  Arc<Mutex<HashMap<String, (Vec<String>, Instant)>>>,
+  peers:  PeerMap,
 }
 
 impl Discovery {
+  /// # Errors
+  ///
+  /// Returns an error if the mDNS service daemon cannot be created.
   pub fn new(cfg: DiscoveryConfig, prober: Prober) -> anyhow::Result<Self> {
     Ok(Self {
       cfg,
@@ -27,6 +32,9 @@ impl Discovery {
     })
   }
 
+  /// # Errors
+  ///
+  /// Returns an error if the mDNS browse subscription fails.
   pub async fn run(
     self,
     mut stop: watch::Receiver<bool>,

@@ -45,7 +45,7 @@ pub struct Router {
   inner: Arc<RouterInner>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct RouterTuning {
   pub max_concurrent_races:      u32,
   pub per_upstream_max_inflight: u32,
@@ -153,6 +153,10 @@ impl Router {
     })
   }
 
+  /// # Errors
+  ///
+  /// Returns [`NarInfoError`] if `public_key` is not in valid `name:base64`
+  /// Nix format.
   pub async fn set_upstream_key(
     &self,
     url: String,
@@ -168,6 +172,14 @@ impl Router {
     Ok(())
   }
 
+  /// Resolve a narinfo hash to an upstream URL by checking the route cache
+  /// then racing all candidates.
+  ///
+  /// # Errors
+  ///
+  /// Returns [`RouterError::NotFound`] if no upstream has the path,
+  /// [`RouterError::UpstreamUnavailable`] if all upstreams failed, or a
+  /// database/network error propagated from a dependency.
   pub async fn resolve(
     &self,
     store_hash: &str,
@@ -256,10 +268,7 @@ impl Router {
       return Err(RouterError::NoCandidates(store_hash.to_string()));
     }
     let wait_start = Instant::now();
-    let _race_permit = self
-      .inner
-      .race_semaphore
-      .clone()
+    let _race_permit = Arc::clone(&self.inner.race_semaphore)
       .acquire_owned()
       .await
       .map_err(|_| RouterError::UpstreamUnavailable)?;
@@ -290,7 +299,7 @@ impl Router {
     }
 
     let mut any_not_found = false;
-    let mut attempts_total = 0_u64;
+    let mut attempts_total = 0_u32;
     for (_priority, group) in groups {
       let (group_result, attempts) = self.race_group(store_hash, &group).await;
       attempts_total += attempts;
@@ -299,7 +308,7 @@ impl Router {
           ncro_metrics::get()
             .narinfo_upstream_attempts_per_resolve
             .with_label_values(&["success"])
-            .observe(attempts_total as f64);
+            .observe(f64::from(attempts_total));
           return self.commit_winner(winner, store_hash).await;
         },
         Err(RaceGroupError::NotFound) => any_not_found = true,
@@ -315,7 +324,7 @@ impl Router {
       } else {
         "unavailable"
       }])
-      .observe(attempts_total as f64);
+      .observe(f64::from(attempts_total));
 
     if any_not_found {
       Err(RouterError::NotFound)
@@ -330,7 +339,7 @@ impl Router {
     &self,
     store_hash: &str,
     group: &[String],
-  ) -> (Result<RaceResult, RaceGroupError>, u64) {
+  ) -> (Result<RaceResult, RaceGroupError>, u32) {
     let mut handles = FuturesUnordered::new();
     for upstream in group {
       let upstream = upstream.clone();
@@ -361,7 +370,7 @@ impl Router {
 
     let mut net_errs = 0usize;
     let mut not_founds = 0usize;
-    let mut attempts = 0_u64;
+    let mut attempts = 0_u32;
     let deadline = tokio::time::sleep(self.inner.race_timeout);
     tokio::pin!(deadline);
 
@@ -424,10 +433,10 @@ impl Router {
   }
 
   fn in_cooldown(&self, url: &str) -> bool {
-    if let Some(until) = self.inner.upstream_cooldown.get(url) {
-      if *until > Instant::now() {
-        return true;
-      }
+    if let Some(until) = self.inner.upstream_cooldown.get(url)
+      && *until > Instant::now()
+    {
+      return true;
     }
     self.inner.upstream_cooldown.remove(url);
     false
@@ -468,7 +477,7 @@ impl Router {
     let nar_url = raw_nar_url
       .trim_start_matches('/')
       .split_once('?')
-      .map_or(raw_nar_url.trim_start_matches('/'), |(path, _)| path)
+      .map_or_else(|| raw_nar_url.trim_start_matches('/'), |(path, _)| path)
       .to_string();
 
     ncro_metrics::get()

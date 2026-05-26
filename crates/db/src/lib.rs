@@ -64,6 +64,10 @@ pub struct Db {
 }
 
 impl Db {
+  /// # Errors
+  ///
+  /// Returns [`DbError`] if the database directory cannot be created, the
+  /// connection pool fails to open, or the schema migration fails.
   pub async fn open(path: &str, max_entries: i64) -> Result<Self, DbError> {
     if path != ":memory:"
       && let Some(parent) = Path::new(path).parent()
@@ -97,6 +101,9 @@ impl Db {
     })
   }
 
+  /// # Errors
+  ///
+  /// Returns [`DbError`] on `SQLite` query failure or invalid stored data.
   pub async fn get_route(
     &self,
     store_path: &str,
@@ -112,6 +119,9 @@ impl Db {
     row.as_ref().map(row_to_route).transpose()
   }
 
+  /// # Errors
+  ///
+  /// Returns [`DbError`] on `SQLite` query failure or invalid stored data.
   pub async fn get_route_by_nar_url(
     &self,
     nar_url: &str,
@@ -128,6 +138,9 @@ impl Db {
     row.as_ref().map(row_to_route).transpose()
   }
 
+  /// # Errors
+  ///
+  /// Returns [`DbError`] on `SQLite` write failure.
   pub async fn set_route(&self, entry: &RouteEntry) -> Result<(), DbError> {
     sqlx::query(
             r"INSERT INTO routes
@@ -168,6 +181,9 @@ impl Db {
     Ok(())
   }
 
+  /// # Errors
+  ///
+  /// Returns [`DbError`] on `SQLite` write failure.
   pub async fn expire_old_routes(&self) -> Result<(), DbError> {
     sqlx::query("DELETE FROM routes WHERE ttl < ?")
       .bind(Utc::now().timestamp())
@@ -176,6 +192,9 @@ impl Db {
     Ok(())
   }
 
+  /// # Errors
+  ///
+  /// Returns [`DbError`] on `SQLite` query failure or invalid stored data.
   pub async fn list_recent_routes(
     &self,
     n: i64,
@@ -192,6 +211,9 @@ impl Db {
     rows.iter().map(row_to_route).collect()
   }
 
+  /// # Errors
+  ///
+  /// Returns [`DbError`] on `SQLite` query failure.
   pub async fn route_count(&self) -> Result<i64, DbError> {
     Ok(
       sqlx::query("SELECT COUNT(*) FROM routes")
@@ -201,6 +223,9 @@ impl Db {
     )
   }
 
+  /// # Errors
+  ///
+  /// Returns [`DbError`] on `SQLite` write failure.
   pub async fn set_negative(
     &self,
     store_path: &str,
@@ -217,6 +242,9 @@ impl Db {
     Ok(())
   }
 
+  /// # Errors
+  ///
+  /// Returns [`DbError`] on `SQLite` query failure.
   pub async fn is_negative(&self, store_path: &str) -> Result<bool, DbError> {
     Ok(
       sqlx::query(
@@ -232,6 +260,9 @@ impl Db {
     )
   }
 
+  /// # Errors
+  ///
+  /// Returns [`DbError`] on `SQLite` write failure.
   pub async fn expire_negatives(&self) -> Result<(), DbError> {
     sqlx::query("DELETE FROM negative_cache WHERE expires_at < ?")
       .bind(Utc::now().timestamp())
@@ -240,6 +271,9 @@ impl Db {
     Ok(())
   }
 
+  /// # Errors
+  ///
+  /// Returns [`DbError`] on `SQLite` write failure.
   pub async fn save_health(
     &self,
     url: &str,
@@ -264,6 +298,9 @@ impl Db {
     Ok(())
   }
 
+  /// # Errors
+  ///
+  /// Returns [`DbError`] on `SQLite` query failure.
   pub async fn load_all_health(&self) -> Result<Vec<HealthRow>, DbError> {
     let rows = sqlx::query(
       "SELECT url, ema_latency, consecutive_fails, total_queries FROM \
@@ -475,13 +512,17 @@ mod tests {
       narinfo_bytes: Some(bytes.clone()),
     };
     db.set_route(&entry).await?;
-    let got = db.get_route("abc").await?.unwrap();
+    let got = db
+      .get_route("abc")
+      .await?
+      .ok_or_else(|| DbError::InvalidData("route not found".to_string()))?;
     assert_eq!(got.narinfo_bytes, Some(bytes));
     Ok(())
   }
 
   #[tokio::test]
-  async fn concurrent_reads_do_not_deadlock() -> Result<(), DbError> {
+  async fn concurrent_reads_do_not_deadlock()
+  -> Result<(), Box<dyn std::error::Error>> {
     let db = Db::open(":memory:", 100).await?;
     let now = Utc::now();
     let entry = RouteEntry {
@@ -500,14 +541,14 @@ mod tests {
     };
     db.set_route(&entry).await?;
     let db = std::sync::Arc::new(db);
-    let handles: Vec<_> = (0..4)
-      .map(|_| {
-        let db = db.clone();
-        tokio::spawn(async move { db.get_route("aaa").await })
-      })
-      .collect();
+    let handles: Vec<_> = std::iter::repeat_with(|| {
+      let db = std::sync::Arc::clone(&db);
+      tokio::spawn(async move { db.get_route("aaa").await })
+    })
+    .take(4)
+    .collect();
     for h in handles {
-      assert!(h.await.unwrap()?.is_some());
+      assert!(h.await??.is_some());
     }
     Ok(())
   }

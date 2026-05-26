@@ -15,7 +15,7 @@ use std::{
 /// | Degraded | 3–9               | x4         |
 /// | Down     | 10+               | x10        |
 #[must_use]
-fn backoff_interval(base: Duration, consecutive_fails: u32) -> Duration {
+const fn backoff_interval(base: Duration, consecutive_fails: u32) -> Duration {
   let multiplier = match consecutive_fails {
     0..=2 => 1,
     3..=9 => 4,
@@ -389,9 +389,10 @@ mod tests {
     p.add_upstream("https://example.com".into(), 1).await;
     p.record_latency("https://example.com", 42.0).await;
     let h = p.get_health("https://example.com").await.ok_or("missing")?;
-    assert_eq!(
-      h.ema_latency, 42.0,
-      "first sample must be exact, not alpha-weighted"
+    assert!(
+      (h.ema_latency - 42.0).abs() < f64::EPSILON,
+      "first sample must be exact, not alpha-weighted: got {}",
+      h.ema_latency
     );
     assert_eq!(h.total_queries, 1);
     Ok(())
@@ -440,7 +441,8 @@ mod tests {
     p.seed("https://fast.com", 10.0, 0, 5).await;
     p.seed("https://down.com", 5.0, 10, 5).await; // faster but Down
     let sorted = p.sorted_by_latency().await;
-    assert_eq!(sorted.last().unwrap().url, "https://down.com");
+    let last = sorted.last().ok_or("sorted list must not be empty")?;
+    assert_eq!(last.url, "https://down.com");
     Ok(())
   }
 

@@ -49,6 +49,10 @@ pub struct Node {
 }
 
 impl Node {
+  /// # Errors
+  ///
+  /// Returns [`MeshError`] if the key file exists but cannot be read, is the
+  /// wrong size, or a new key cannot be written to `key_path`.
   pub async fn new(key_path: &str) -> Result<Self, MeshError> {
     if key_path.is_empty() {
       return Ok(Self {
@@ -87,6 +91,9 @@ impl Node {
   pub fn public_key(&self) -> [u8; 32] {
     self.signing_key.verifying_key().to_bytes()
   }
+  /// # Errors
+  ///
+  /// Returns [`MeshError`] if the message cannot be serialized.
   pub fn sign(&self, msg: &Message) -> Result<(Vec<u8>, Vec<u8>), MeshError> {
     let body = rmp_serde::to_vec(msg)?;
     Ok((
@@ -102,6 +109,10 @@ fn random_key_bytes() -> [u8; 32] {
   bytes
 }
 
+/// # Errors
+///
+/// Returns [`MeshError::InvalidSignature`] if the key, signature, or body
+/// fails verification.
 pub fn verify(pubkey: &[u8], body: &[u8], sig: &[u8]) -> Result<(), MeshError> {
   let pubkey: [u8; 32] =
     pubkey.try_into().map_err(|_| MeshError::InvalidSignature)?;
@@ -113,6 +124,9 @@ pub fn verify(pubkey: &[u8], body: &[u8], sig: &[u8]) -> Result<(), MeshError> {
     .map_err(|_| MeshError::InvalidSignature)
 }
 
+/// # Errors
+///
+/// Returns [`MeshError`] if the UDP socket cannot be bound to `addr`.
 pub async fn listen_and_serve(
   addr: &str,
   db: Db,
@@ -174,6 +188,10 @@ async fn merge_routes(db: &Db, incoming: Vec<RouteEntry>) {
   }
 }
 
+/// # Errors
+///
+/// Returns [`MeshError`] if the message cannot be signed, the socket cannot
+/// be bound, or the packet fails to send.
 pub async fn announce(
   peer_addr: &str,
   node: &Node,
@@ -238,7 +256,6 @@ fn decode_packet(packet: &[u8]) -> Result<DecodedPacket<'_>, MeshError> {
 
 #[cfg(test)]
 mod tests {
-  #![expect(clippy::unwrap_used, reason = "Fine in tests")]
   use ncro_db::{Db, RouteEntry};
 
   use super::merge_routes;
@@ -262,40 +279,56 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn merge_routes_inserts_new_route() {
-    let db = Db::open(":memory:", 100).await.unwrap();
+  async fn merge_routes_inserts_new_route()
+  -> Result<(), Box<dyn std::error::Error>> {
+    let db = Db::open(":memory:", 100).await?;
     merge_routes(&db, vec![route("abc123", 10.0, 3600)]).await;
-    assert!(db.get_route("abc123").await.unwrap().is_some());
+    assert!(db.get_route("abc123").await?.is_some());
+    Ok(())
   }
 
   #[tokio::test]
-  async fn merge_routes_skips_expired_route() {
-    let db = Db::open(":memory:", 100).await.unwrap();
+  async fn merge_routes_skips_expired_route()
+  -> Result<(), Box<dyn std::error::Error>> {
+    let db = Db::open(":memory:", 100).await?;
     merge_routes(&db, vec![route("abc123", 10.0, -1)]).await;
-    assert!(db.get_route("abc123").await.unwrap().is_none());
+    assert!(db.get_route("abc123").await?.is_none());
+    Ok(())
   }
 
   #[tokio::test]
-  async fn merge_routes_does_not_overwrite_lower_latency() {
-    let db = Db::open(":memory:", 100).await.unwrap();
-    db.set_route(&route("abc123", 5.0, 3600)).await.unwrap();
+  async fn merge_routes_does_not_overwrite_lower_latency()
+  -> Result<(), Box<dyn std::error::Error>> {
+    let db = Db::open(":memory:", 100).await?;
+    db.set_route(&route("abc123", 5.0, 3600)).await?;
     merge_routes(&db, vec![route("abc123", 20.0, 3600)]).await;
-    let got = db.get_route("abc123").await.unwrap().unwrap();
-    assert_eq!(
-      got.latency_ema, 5.0,
-      "worse incoming must not overwrite better existing"
+    let got = db
+      .get_route("abc123")
+      .await?
+      .ok_or("expected route in db")?;
+    assert!(
+      (got.latency_ema - 5.0).abs() < f64::EPSILON,
+      "worse incoming must not overwrite better existing: got {}",
+      got.latency_ema
     );
+    Ok(())
   }
 
   #[tokio::test]
-  async fn merge_routes_overwrites_higher_latency() {
-    let db = Db::open(":memory:", 100).await.unwrap();
-    db.set_route(&route("abc123", 20.0, 3600)).await.unwrap();
+  async fn merge_routes_overwrites_higher_latency()
+  -> Result<(), Box<dyn std::error::Error>> {
+    let db = Db::open(":memory:", 100).await?;
+    db.set_route(&route("abc123", 20.0, 3600)).await?;
     merge_routes(&db, vec![route("abc123", 5.0, 3600)]).await;
-    let got = db.get_route("abc123").await.unwrap().unwrap();
-    assert_eq!(
-      got.latency_ema, 5.0,
-      "better incoming must overwrite worse existing"
+    let got = db
+      .get_route("abc123")
+      .await?
+      .ok_or("expected route in db")?;
+    assert!(
+      (got.latency_ema - 5.0).abs() < f64::EPSILON,
+      "better incoming must overwrite worse existing: got {}",
+      got.latency_ema
     );
+    Ok(())
   }
 }

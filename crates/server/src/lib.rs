@@ -195,8 +195,7 @@ async fn nar(
   let path_and_query = req
     .uri()
     .path_and_query()
-    .map(|pq| pq.as_str())
-    .unwrap_or_else(|| req.uri().path())
+    .map_or_else(|| req.uri().path(), axum::http::uri::PathAndQuery::as_str)
     .to_string();
 
   if let Ok(Some(entry)) = state.db.get_route_by_nar_url(&nar_url).await

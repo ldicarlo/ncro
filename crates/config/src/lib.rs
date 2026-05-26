@@ -45,12 +45,15 @@ mod tests {
        0\nper_upstream_max_inflight = 1\nin_memory_negative_ttl = \
        \"5s\"\nupstream_cooldown = \"10s\"\n",
     )?;
-    let err = cfg.validate().expect_err("expected validation failure");
-    assert!(
-      err
-        .to_string()
-        .contains("cache.mass_query.max_concurrent_races must be >= 1")
-    );
+    let result = cfg.validate();
+    assert!(result.is_err(), "expected validation failure");
+    if let Err(err) = result {
+      assert!(
+        err
+          .to_string()
+          .contains("cache.mass_query.max_concurrent_races must be >= 1")
+      );
+    }
     Ok(())
   }
 }
@@ -260,6 +263,10 @@ impl Default for Config {
 }
 
 impl Config {
+  /// # Errors
+  ///
+  /// Returns [`ConfigError::Read`] if the config file cannot be read, or
+  /// [`ConfigError::Parse`] if the TOML is malformed.
   pub fn load(path: Option<&str>) -> Result<Self, ConfigError> {
     let mut cfg = if let Some(path) = path.filter(|p| !p.is_empty()) {
       let data = fs::read_to_string(path)?;
@@ -287,6 +294,10 @@ impl Config {
     Ok(cfg)
   }
 
+  /// # Errors
+  ///
+  /// Returns [`ConfigError::Validation`] if any field fails the constraint
+  /// checks (e.g. empty upstream list, out-of-range latency alpha).
   pub fn validate(&self) -> Result<(), ConfigError> {
     if self.upstreams.is_empty() {
       return Err(ConfigError::Validation(

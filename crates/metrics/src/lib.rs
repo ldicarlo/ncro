@@ -30,6 +30,13 @@ pub struct Metrics {
 
 static METRICS: OnceLock<Metrics> = OnceLock::new();
 
+/// Returns the global [`Metrics`] instance, initializing it on first call.
+///
+/// # Panics
+///
+/// Panics if any Prometheus metric or counter cannot be constructed (only
+/// possible if metric names or label arrays contain invalid characters, which
+/// cannot happen with the static constants used here).
 #[expect(
   clippy::expect_used,
   reason = "metric names and labels are static constants validated during \

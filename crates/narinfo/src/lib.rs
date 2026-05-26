@@ -173,6 +173,10 @@ pub struct NarInfo {
   pub ca:          String,
 }
 
+/// # Errors
+///
+/// Returns [`NarInfoError`] if the input lacks a `name:base64` separator,
+/// the name is empty, the base64 is invalid, or the key is not 32 bytes.
 pub fn parse_public_key(
   input: &str,
 ) -> Result<(String, VerifyingKey), NarInfoError> {
@@ -201,6 +205,10 @@ pub fn parse_public_key(
 }
 
 impl NarInfo {
+  /// # Errors
+  ///
+  /// Returns [`NarInfoError`] if a line is malformed, an integer field cannot
+  /// be parsed, an I/O error occurs, or `StorePath` is missing.
   pub fn parse(reader: impl Read) -> Result<Self, NarInfoError> {
     let mut narinfo = Self::default();
     for line in BufReader::new(reader).lines() {
@@ -271,6 +279,10 @@ impl NarInfo {
     )
   }
 
+  /// # Errors
+  ///
+  /// Returns [`NarInfoError`] if `public_key` cannot be parsed (see
+  /// [`parse_public_key`]).
   pub fn verify(&self, public_key: &str) -> Result<bool, NarInfoError> {
     let (key_name, key) = parse_public_key(public_key)?;
     let fingerprint = self.fingerprint();
