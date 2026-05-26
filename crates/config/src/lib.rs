@@ -37,6 +37,22 @@ mod tests {
     assert_eq!(cfg.cache.ttl.0, Duration::from_secs(7200));
     Ok(())
   }
+
+  #[test]
+  fn validates_mass_query_limits() -> Result<(), toml::de::Error> {
+    let cfg: Config = toml::from_str(
+      "[cache.mass_query]\nmax_concurrent_races = \
+       0\nper_upstream_max_inflight = 1\nin_memory_negative_ttl = \
+       \"5s\"\nupstream_cooldown = \"10s\"\n",
+    )?;
+    let err = cfg.validate().expect_err("expected validation failure");
+    assert!(
+      err
+        .to_string()
+        .contains("cache.mass_query.max_concurrent_races must be >= 1")
+    );
+    Ok(())
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +109,7 @@ pub struct CacheConfig {
   pub ttl:           HumanDuration,
   pub negative_ttl:  HumanDuration,
   pub latency_alpha: f64,
+  pub mass_query:    MassQueryConfig,
 }
 
 impl Default for CacheConfig {
@@ -103,6 +120,27 @@ impl Default for CacheConfig {
       ttl:           HumanDuration(Duration::from_secs(60 * 60)),
       negative_ttl:  HumanDuration(Duration::from_secs(10 * 60)),
       latency_alpha: 0.3,
+      mass_query:    MassQueryConfig::default(),
+    }
+  }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct MassQueryConfig {
+  pub max_concurrent_races:      u32,
+  pub per_upstream_max_inflight: u32,
+  pub in_memory_negative_ttl:    HumanDuration,
+  pub upstream_cooldown:         HumanDuration,
+}
+
+impl Default for MassQueryConfig {
+  fn default() -> Self {
+    Self {
+      max_concurrent_races:      64,
+      per_upstream_max_inflight: 8,
+      in_memory_negative_ttl:    HumanDuration(Duration::from_secs(5)),
+      upstream_cooldown:         HumanDuration(Duration::from_secs(15)),
     }
   }
 }
@@ -295,6 +333,26 @@ impl Config {
     if self.cache.max_entries <= 0 {
       return Err(ConfigError::Validation(
         "cache.max_entries must be positive".to_string(),
+      ));
+    }
+    if self.cache.mass_query.max_concurrent_races == 0 {
+      return Err(ConfigError::Validation(
+        "cache.mass_query.max_concurrent_races must be >= 1".to_string(),
+      ));
+    }
+    if self.cache.mass_query.per_upstream_max_inflight == 0 {
+      return Err(ConfigError::Validation(
+        "cache.mass_query.per_upstream_max_inflight must be >= 1".to_string(),
+      ));
+    }
+    if self.cache.mass_query.in_memory_negative_ttl.0.is_zero() {
+      return Err(ConfigError::Validation(
+        "cache.mass_query.in_memory_negative_ttl must be positive".to_string(),
+      ));
+    }
+    if self.cache.mass_query.upstream_cooldown.0.is_zero() {
+      return Err(ConfigError::Validation(
+        "cache.mass_query.upstream_cooldown must be positive".to_string(),
       ));
     }
     if self.mesh.enabled && self.mesh.peers.is_empty() {

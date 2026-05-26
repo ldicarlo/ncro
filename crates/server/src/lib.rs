@@ -187,7 +187,18 @@ async fn nar(
   req: Request<Body>,
 ) -> Response {
   ncro_metrics::get().nar_requests.inc();
+  // Path without leading slash for DB lookup (query stripped; harmonia appends
+  // ?hash=STORE_HASH which is not part of the stored key).
   let nar_url = req.uri().path().trim_start_matches('/').to_string();
+  // Full path+query forwarded to upstream so harmonia can locate the store
+  // path.
+  let path_and_query = req
+    .uri()
+    .path_and_query()
+    .map(|pq| pq.as_str())
+    .unwrap_or_else(|| req.uri().path())
+    .to_string();
+
   if let Ok(Some(entry)) = state.db.get_route_by_nar_url(&nar_url).await
     && entry.is_valid()
     && let Some(resp) = try_nar_upstream(
@@ -195,7 +206,7 @@ async fn nar(
       req.method().clone(),
       req.headers(),
       &entry.upstream_url,
-      req.uri().path(),
+      &path_and_query,
     )
     .await
   {
@@ -218,7 +229,7 @@ async fn nar(
         req.method().clone(),
         req.headers(),
         &h.url,
-        req.uri().path(),
+        &path_and_query,
       )
       .await
       {
@@ -256,7 +267,7 @@ async fn try_nar_upstream(
     upstream_request(client, method, headers, format!("{upstream}{path}"))
       .await
       .ok()?;
-  if resp.status() == reqwest::StatusCode::NOT_FOUND {
+  if !resp.status().is_success() {
     return None;
   }
   Some(response_from_reqwest(resp))

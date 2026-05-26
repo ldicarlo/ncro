@@ -331,11 +331,27 @@ in
               assert "/nix/store" in out, \
                   f"{node.name}: /nix-cache-info has wrong StoreDir: {out!r}"
 
-          # /health must return JSON with a 'status' field.
+          # /health must return JSON with a 'status' field and a non-empty
+          # upstreams list where each entry carries url and status.
           for node in (node1, node2, node3):
               h = ncro_health(node)
               assert "status" in h, \
                   f"{node.name}: /health missing 'status': {h!r}"
+              assert "upstreams" in h, \
+                  f"{node.name}: /health missing 'upstreams': {h!r}"
+              assert len(h["upstreams"]) > 0, \
+                  f"{node.name}: /health upstreams list is empty"
+              for up in h["upstreams"]:
+                  assert "url" in up and "status" in up, \
+                      f"{node.name}: upstream entry missing fields: {up!r}"
+
+          # /metrics must return Prometheus-format text (at least one TYPE line).
+          # XXX: This test is rather useless, but I don't want to verify the entire
+          # thing. Maybe in the future?
+          for node in (node1, node2, node3):
+              metrics_out = node.succeed("curl -sf http://localhost:8080/metrics")
+              assert "# TYPE" in metrics_out, \
+                  f"{node.name}: /metrics not in Prometheus format: {metrics_out[:200]!r}"
 
       with subtest("read the runtime-generated public key from node1"):
           # The key was generated at boot; verify it has the expected format.
