@@ -177,6 +177,14 @@ upstream_cooldown = "15s" # cooldown on transient upstream network errors
 level = "info" # debug | info | warn | error
 format = "json" # json | text
 
+[discovery]
+enabled = false
+service_name = "_nix-serve._tcp" # mDNS service type to browse
+domain = "local"                 # mDNS domain
+discovery_time = "5s"            # how long to listen per discovery cycle
+priority = 20                    # priority assigned to discovered upstreams
+address_family = "any"           # "any" | "ipv4" | "ipv6"
+
 [mesh]
 enabled = false
 bind_addr = "0.0.0.0:7946"
@@ -237,6 +245,33 @@ WantedBy=multi-user.target
 Place it in `/etc/systemd/system/` and enable the service with
 `systemctl enable`. In the case you want to test out first, run the binary with
 a sample configuration instead.
+
+## Discovery Mode
+
+When `discovery.enabled = true`, ncro browses the local network for mDNS
+services matching `service_name` (default `_nix-serve._tcp`) and registers each
+discovered instance as a dynamic upstream with `priority`.
+
+Every routable address advertised by a discovered service is registered
+separately. When `address_family = "any"` (default), both IPv4 and IPv6
+addresses are added so the router's race engine can try them in parallel. Set
+`address_family = "ipv4"` or `address_family = "ipv6"` to restrict to one
+family. This is _generally_ useful when your binary cache server only listens on
+one stack (e.g. nix-serve binds `0.0.0.0` by default and does not accept IPv6
+connections.)
+
+Discovered upstreams are removed when they have not been seen for three
+`discovery_time` intervals.
+
+```toml
+[discovery]
+enabled = true
+service_name = "_nix-serve._tcp"
+domain = "local"
+discovery_time = "5s"
+priority = 20
+address_family = "ipv4" # restrict to IPv4-only caches
+```
 
 ## Mesh Mode
 

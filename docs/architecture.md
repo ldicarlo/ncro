@@ -123,7 +123,7 @@ gracefully.
 
 The most important settings are `upstreams`, `server.listen`, `cache.db_path`,
 `cache.ttl`, `cache.negative_ttl`, `cache.latency_alpha`,
-`server.cache_priority`, `discovery.enabled`, and `mesh.enabled`.
+`server.cache_priority`, `discovery.enabled`, `discovery.address_family`, and `mesh.enabled`.
 
 `upstreams` defines the cache backends ncro can use. Each upstream can carry a
 `priority` value and an optional `public_key` for mesh verification.
@@ -141,3 +141,8 @@ responses. It should stay positive.
 `discovery.enabled` and `mesh.enabled` turn on the optional network-coordination
 paths described above. Discovery is opportunistic; mesh is signed and intended
 for trusted peers.
+
+`discovery.address_family` controls which addresses from an mDNS-discovered
+peer are registered as upstreams. The default `any` registers all routable
+addresses (IPv4 and IPv6) so the race engine can try them in parallel. Set
+`ipv4` or `ipv6` when the upstream server only listens on one address family.
