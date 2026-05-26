@@ -256,7 +256,7 @@ async fn try_nar_upstream(
     upstream_request(client, method, headers, format!("{upstream}{path}"))
       .await
       .ok()?;
-  if resp.status() == reqwest::StatusCode::NOT_FOUND {
+  if !resp.status().is_success() {
     return None;
   }
   Some(response_from_reqwest(resp))
