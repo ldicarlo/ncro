@@ -339,14 +339,15 @@ impl Router {
       .with_label_values(&[&winner.url])
       .observe(winner.latency_ms / 1000.0);
 
-    let ema = self
-      .inner
-      .prober
-      .get_health(&winner.url)
-      .await
-      .map_or(winner.latency_ms, |h| {
-        0.3f64.mul_add(winner.latency_ms, 0.7 * h.ema_latency)
-      });
+    let ema = self.inner.prober.get_health(&winner.url).await.map_or(
+      winner.latency_ms,
+      |h| {
+        self.inner.prober.alpha().mul_add(
+          winner.latency_ms,
+          (1.0 - self.inner.prober.alpha()) * h.ema_latency,
+        )
+      },
+    );
     self
       .inner
       .prober

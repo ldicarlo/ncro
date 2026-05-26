@@ -103,6 +103,11 @@ impl Prober {
     })
   }
 
+  #[must_use]
+  pub fn alpha(&self) -> f64 {
+    self.inner.alpha
+  }
+
   pub async fn init_upstreams(&self, upstreams: &[UpstreamConfig]) {
     let mut table = self.inner.table.write().await;
     for upstream in upstreams {
