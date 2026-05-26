@@ -2,6 +2,7 @@
   lib,
   rustPlatform,
   pkg-config,
+  cacert,
 }: let
   cargoTOML = (lib.importTOML ../Cargo.toml).workspace.package;
 in
@@ -23,11 +24,12 @@ in
         ];
       };
 
-    # relies on CA certificates
-    checkFlags = ["--skip=ncro::tests::ema_and_status_progression"];
-
     cargoLock.lockFile = "${finalAttrs.src}/Cargo.lock";
-    nativeBuildInputs = [pkg-config];
+    nativeBuildInputs = [pkg-config cacert];
+
+    # reqwest (rustls) needs a CA bundle to construct a TLS client, even in
+    # tests that never make network requests.
+    env.SSL_CERT_FILE = "${cacert}/etc/ssl/certs/ca-bundle.crt";
 
     meta = {
       homepage = "https://github.com/feel-co/ncro";
