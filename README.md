@@ -330,9 +330,11 @@ $ cargo test
 
 <!--markdownlint-disable MD033 MD059-->
 
-ncro is made available under Mozilla Public License (MPL) version 2.0. See
-[LICENSE](LICENSE) for more details on the exact conditions. An online copy is
-provided [here](https://www.mozilla.org/en-US/MPL/2.0/).
+[provided here]: https://interoperable-europe.ec.europa.eu/sites/default/files/custom-page/attachment/eupl_v1.2_en.pdf
+
+This project is made available under European Union Public Licence (EUPL)
+version 1.2. See [LICENSE](LICENSE) for more details on the exact conditions. An
+online copy is [provided here].
 
 <div align="right">
   <a href="#doc-begin">Back to the Top</a>
