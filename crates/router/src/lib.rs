@@ -463,7 +463,13 @@ impl Router {
   ) -> Result<ResolveResult, RouterError> {
     let (body, raw_nar_url, nar_hash, nar_size) =
       self.fetch_narinfo(&winner.url, store_hash).await?;
-    let nar_url = raw_nar_url.trim_start_matches('/').to_string();
+    // Strip leading slash and query string (harmonia appends ?hash=STORE_HASH)
+    // so the DB key is just the path component for consistent lookups.
+    let nar_url = raw_nar_url
+      .trim_start_matches('/')
+      .split_once('?')
+      .map_or(raw_nar_url.trim_start_matches('/'), |(path, _)| path)
+      .to_string();
 
     ncro_metrics::get()
       .upstream_race_wins
