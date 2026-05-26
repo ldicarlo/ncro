@@ -343,17 +343,18 @@ async fn add_column_if_missing(
   column: &str,
   definition: &str,
 ) -> Result<(), DbError> {
-  let rows = sqlx::query(&format!("PRAGMA table_info({table})"))
-    .fetch_all(pool)
-    .await?;
+  let rows =
+    sqlx::query(sqlx::AssertSqlSafe(format!("PRAGMA table_info({table})")))
+      .fetch_all(pool)
+      .await?;
   let exists = rows.iter().any(|row| {
     let name: String = row.get("name");
     name == column
   });
   if !exists {
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
       "ALTER TABLE {table} ADD COLUMN {column} {definition}"
-    ))
+    )))
     .execute(pool)
     .await?;
   }
