@@ -14,6 +14,58 @@ pub enum ConfigError {
   Validation(String),
 }
 
+/// Converts a Nix-style `s3://bucket?...` URL to the equivalent HTTP(S) URL
+/// that ncro's HTTP client can use.
+///
+/// Supported query parameters (all optional):
+///
+/// - `endpoint` - custom S3-compatible host; selects path-based addressing
+/// - `scheme`   - `http` or `https` (default `https`; only relevant with
+///   `endpoint`)
+/// - `region`   - AWS region; used to build the virtual-hosted AWS endpoint
+/// - `profile`  - credential profile (auth not yet supported; parameter
+///   ignored)
+///
+/// # Errors
+///
+/// Returns [`ConfigError::Validation`] if the URL cannot be parsed or is
+/// missing a bucket name, i.e., host component.
+fn s3_url_to_http(raw: &str) -> Result<String, ConfigError> {
+  let parsed = Url::parse(raw).map_err(|e| {
+    ConfigError::Validation(format!("s3 upstream: invalid URL {raw:?}: {e}"))
+  })?;
+
+  let bucket = parsed.host_str().ok_or_else(|| {
+    ConfigError::Validation(format!("s3 upstream {raw:?}: missing bucket name"))
+  })?;
+
+  let mut endpoint: Option<String> = None;
+  let mut scheme = "https".to_string();
+  let mut region: Option<String> = None;
+
+  for (key, value) in parsed.query_pairs() {
+    match key.as_ref() {
+      "endpoint" => endpoint = Some(value.into_owned()),
+      "scheme" => scheme = value.into_owned(),
+      "region" => region = Some(value.into_owned()),
+      _ => {},
+    }
+  }
+
+  Ok(endpoint.map_or_else(
+    || {
+      region.map_or_else(
+        // AWS S3 without region: region-agnostic global endpoint.
+        || format!("https://{bucket}.s3.amazonaws.com"),
+        // AWS S3 with known region: virtual-hosted-style endpoint.
+        |r| format!("https://{bucket}.s3.{r}.amazonaws.com"),
+      )
+    },
+    // S3-compatible store with explicit host: use path-based addressing.
+    |ep| format!("{scheme}://{ep}/{bucket}"),
+  ))
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -35,6 +87,65 @@ mod tests {
     )?;
     assert_eq!(cfg.server.cache_priority, 40);
     assert_eq!(cfg.cache.ttl.0, Duration::from_secs(7200));
+    Ok(())
+  }
+
+  #[test]
+  fn s3_url_custom_endpoint_http() -> Result<(), ConfigError> {
+    assert_eq!(
+      s3_url_to_http(
+        "s3://my-cache?profile=default&scheme=http&region=us-east-1&\
+         endpoint=minio.example.com",
+      )?,
+      "http://minio.example.com/my-cache"
+    );
+    Ok(())
+  }
+
+  #[test]
+  fn s3_url_custom_endpoint_default_scheme() -> Result<(), ConfigError> {
+    assert_eq!(
+      s3_url_to_http("s3://my-cache?endpoint=minio.example.com")?,
+      "https://minio.example.com/my-cache"
+    );
+    Ok(())
+  }
+
+  #[test]
+  fn s3_url_aws_with_region() -> Result<(), ConfigError> {
+    assert_eq!(
+      s3_url_to_http("s3://my-cache?region=eu-west-1")?,
+      "https://my-cache.s3.eu-west-1.amazonaws.com"
+    );
+    Ok(())
+  }
+
+  #[test]
+  fn s3_url_aws_no_params() -> Result<(), ConfigError> {
+    assert_eq!(
+      s3_url_to_http("s3://my-cache")?,
+      "https://my-cache.s3.amazonaws.com"
+    );
+    Ok(())
+  }
+
+  #[test]
+  fn s3_url_missing_bucket_is_error() {
+    assert!(s3_url_to_http("s3://").is_err());
+  }
+
+  #[test]
+  fn load_translates_s3_upstream() -> Result<(), ConfigError> {
+    let toml = r#"
+[[upstreams]]
+url = "s3://dcr-nix-cache?profile=default&scheme=http&region=us-east-1&endpoint=s3.example.com"
+priority = 10
+"#;
+    let cfg: Config = toml::from_str(toml)?;
+    assert_eq!(
+      s3_url_to_http(&cfg.upstreams[0].url)?,
+      "http://s3.example.com/dcr-nix-cache"
+    );
     Ok(())
   }
 
@@ -289,6 +400,12 @@ impl Config {
       && !v.is_empty()
     {
       cfg.logging.level = v;
+    }
+
+    for upstream in &mut cfg.upstreams {
+      if upstream.url.starts_with("s3://") {
+        upstream.url = s3_url_to_http(&upstream.url)?;
+      }
     }
 
     Ok(cfg)
