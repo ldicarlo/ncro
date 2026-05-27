@@ -193,6 +193,8 @@ pub struct UpstreamConfig {
   pub url:        String,
   pub priority:   i32,
   pub public_key: String,
+  pub username:   String,
+  pub password:   Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -361,9 +363,10 @@ impl Default for Config {
     Self {
       server:    ServerConfig::default(),
       upstreams: vec![UpstreamConfig {
-        url:        "https://cache.nixos.org".to_string(),
-        priority:   10,
+        url: "https://cache.nixos.org".to_string(),
+        priority: 10,
         public_key: String::new(),
+        ..Default::default()
       }],
       cache:     CacheConfig::default(),
       mesh:      MeshConfig::default(),
