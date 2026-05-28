@@ -2,23 +2,26 @@
   config,
   pkgs,
   lib,
+  necroPackage,
   ...
-}: let
+}:
+let
   inherit (lib.modules) mkIf;
   inherit (lib.options) mkOption mkEnableOption literalExpression;
 
-  tomlFormat = pkgs.formats.toml {};
+  tomlFormat = pkgs.formats.toml { };
   tomlType = tomlFormat.type;
 
   cfg = config.services.ncro;
   configFile = tomlFormat.generate "ncro.toml" cfg.settings;
-in {
+in
+{
   options.services.ncro = {
     enable = mkEnableOption "ncro, the Nix cache route optimizer";
 
     package = mkOption {
       type = lib.types.package;
-      default = pkgs.callPackage ./package.nix {};
+      default = necroPackage;
       defaultText = literalExpression "inputs.ncro.packages.$${system}.ncro";
       description = "The ncro package to use.";
       example = literalExpression "inputs.ncro.packages.$${system}.ncro";
@@ -26,7 +29,7 @@ in {
 
     settings = mkOption {
       type = tomlType;
-      default = {};
+      default = { };
       description = ''
         ncro configuration as an attribute set.
 
@@ -62,8 +65,8 @@ in {
   config = mkIf cfg.enable {
     systemd.services.ncro = {
       description = "Nix Cache Route Optimizer";
-      wantedBy = ["multi-user.target"];
-      after = ["network.target"];
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network.target" ];
       serviceConfig = {
         ExecStart = "${lib.getExe' cfg.package "ncro"} --config ${configFile}";
         DynamicUser = true;
@@ -93,7 +96,7 @@ in {
         RestrictNamespaces = true;
         LockPersonality = true;
         MemoryDenyWriteExecute = true;
-        SystemCallFilter = ["@system-service"];
+        SystemCallFilter = [ "@system-service" ];
         SystemCallArchitectures = "native";
       };
     };
