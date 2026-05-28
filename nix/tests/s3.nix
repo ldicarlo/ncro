@@ -19,6 +19,8 @@
   garageRpcSecret = "c8b325ea88a9ad61e58d0ed9ba91fd0db70699e3a30ca2d8a70ee0c4a09ceaf2";
   garageRegion = "garage";
   garageBucket = "nix-cache";
+  garageAccessKey = "GK000000000000000000";
+  garageSecretKey = "garage-secret-key-for-ncro-s3-vm-test-000000";
 
   # Credentials for the nginx-protected nix-serve (auth subtest).
   authUser = "ncro";
@@ -39,14 +41,11 @@ in
     nodes = {
       # Runs Garage (S3-compatible object store) pre-populated with s3Payload.
       # Also runs nix-serve behind nginx with Basic Auth for the auth subtest.
-      # Garage v1.x does not support anonymous S3 API access, so an nginx
-      # location on port 3903 strips the bucket prefix and proxies requests to
-      # Garage's web endpoint (port 3902) which allows anonymous reads via the
-      # virtual-host mechanism after `garage bucket website --allow`.
+      # Garage's web endpoint is also enabled for direct bucket assertions; ncro
+      # itself talks to the authenticated S3 API on port 3900.
       backend = {
         config,
         pkgs,
-        lib,
         ...
       }: {
         imports = [commonBase];
@@ -111,16 +110,19 @@ in
                 ${pkgs.garage}/bin/garage bucket create ${garageBucket}
                 ${pkgs.garage}/bin/garage bucket website --allow ${garageBucket}
 
-                # Create an access key for nix copy uploads.
-                key_output=$(${pkgs.garage}/bin/garage key create nix-upload)
-                key_id=$(printf '%s\n' "$key_output" | awk '/^Key ID:/{print $3}')
-                key_secret=$(printf '%s\n' "$key_output" | awk '/^Secret key:/{print $3}')
+                # Create a deterministic key so the proxy node can use the
+                # native authenticated S3 API path.
+                ${pkgs.garage}/bin/garage key import \
+                  --yes \
+                  -n nix-upload \
+                  ${garageAccessKey} \
+                  ${garageSecretKey}
                 ${pkgs.garage}/bin/garage bucket allow \
                   --read --write ${garageBucket} --key nix-upload
 
                 # Upload the store path as a Nix binary cache.
-                export AWS_ACCESS_KEY_ID=$key_id
-                export AWS_SECRET_ACCESS_KEY=$key_secret
+                export AWS_ACCESS_KEY_ID=${garageAccessKey}
+                export AWS_SECRET_ACCESS_KEY=${garageSecretKey}
                 export AWS_REGION=${garageRegion}
                 ${config.nix.package}/bin/nix copy \
                     --to 's3://${garageBucket}?endpoint=127.0.0.1:3900&scheme=http&region=${garageRegion}' \
@@ -173,10 +175,7 @@ in
           enable = true;
           virtualHosts = {
             # Port 3903: strips /nix-cache/ prefix and proxies to Garage web
-            # endpoint at port 3902.  ncro translates
-            # s3://nix-cache?endpoint=backend:3903 -> http://backend:3903/nix-cache,
-            # so requests arrive as GET /nix-cache/<object>; this rewrite removes
-            # the bucket segment before forwarding to Garage's virtual-host web API.
+            # endpoint at port 3902 for direct test assertions.
             garage-web-adapter = {
               listen = [
                 {
@@ -209,8 +208,7 @@ in
       };
 
       # ncro node with two upstreams:
-      #  1. s3://nix-cache?endpoint=backend:3903&scheme=http  (S3 subtest, served
-      #     through the nginx web-adapter in front of Garage)
+      #  1. s3://nix-cache?endpoint=backend:3900&scheme=http  (native S3 API)
       #  2. http://backend:8081 with username/password         (auth subtest)
       proxy = {
         imports = [self.nixosModules.ncro commonBase];
@@ -223,7 +221,7 @@ in
             server.listen = ":8080";
             upstreams = [
               {
-                url = "s3://${garageBucket}?endpoint=backend:3903&scheme=http";
+                url = "s3://${garageBucket}?endpoint=backend:3900&scheme=http&region=${garageRegion}";
                 priority = 1;
               }
               {
@@ -238,6 +236,40 @@ in
               negative_ttl = "30s";
             };
           };
+        };
+
+        systemd.services.ncro.environment = {
+          AWS_ACCESS_KEY_ID = garageAccessKey;
+          AWS_SECRET_ACCESS_KEY = garageSecretKey;
+          AWS_REGION = garageRegion;
+        };
+      };
+
+      badS3Proxy = {
+        imports = [self.nixosModules.ncro commonBase];
+
+        services.ncro = {
+          enable = true;
+          settings = {
+            server.listen = ":8080";
+            upstreams = [
+              {
+                url = "s3://${garageBucket}?endpoint=backend:3900&scheme=http&region=${garageRegion}";
+                priority = 1;
+              }
+            ];
+            cache = {
+              ttl = "5m";
+              negative_ttl = "30s";
+              mass_query.upstream_cooldown = "1s";
+            };
+          };
+        };
+
+        systemd.services.ncro.environment = {
+          AWS_ACCESS_KEY_ID = garageAccessKey;
+          AWS_SECRET_ACCESS_KEY = "wrong-secret-key";
+          AWS_REGION = garageRegion;
         };
       };
     };
@@ -281,6 +313,8 @@ in
 
           proxy.wait_for_unit("ncro.service")
           proxy.wait_for_open_port(8080)
+          badS3Proxy.wait_for_unit("ncro.service")
+          badS3Proxy.wait_for_open_port(8080)
 
       with subtest("Garage bucket contains nix-cache-info"):
           out = backend.succeed(
@@ -314,10 +348,8 @@ in
           h = ncro_health(proxy)
           assert "upstreams" in h, f"/health missing upstreams: {h!r}"
           urls = [u["url"] for u in h["upstreams"]]
-          # The s3:// URL is translated to http://backend:3903/nix-cache at
-          # startup, so the health report uses the translated HTTP URL.
-          assert any("backend:3903" in u for u in urls), \
-              f"S3 upstream (translated) missing from /health: {urls}"
+          assert any("backend:3900" in u for u in urls), \
+              f"S3 upstream missing from /health: {urls}"
           assert any("backend:8081" in u for u in urls), \
               f"auth upstream missing from /health: {urls}"
 
@@ -347,6 +379,28 @@ in
           assert "accept-ranges: bytes" in lowered, \
               f"Accept-Ranges header missing: {headers!r}"
 
+      with subtest("ncro supports HEAD for S3 NARs"):
+          narinfo = proxy.succeed(
+              f"curl -sf http://localhost:8080/{s3_hash}.narinfo"
+          )
+          nar_url = nar_url_from_narinfo(narinfo)
+          headers = proxy.succeed(
+              f"curl -sS -I http://localhost:8080/{nar_url}"
+          )
+          header_lines = [line.rstrip("\r") for line in headers.splitlines()]
+          lowered = [line.lower() for line in header_lines]
+          assert any(line.startswith("HTTP/") and " 200 " in line for line in header_lines), \
+              f"HEAD request did not return 200 OK: {headers!r}"
+          assert any(line.startswith("content-length: ") for line in lowered), \
+              f"Content-Length header missing from S3 HEAD response: {headers!r}"
+          assert "accept-ranges: bytes" in lowered, \
+              f"Accept-Ranges header missing from S3 HEAD response: {headers!r}"
+
+      with subtest("bad S3 credentials fail instead of falling back silently"):
+          badS3Proxy.fail(
+              f"curl -sf http://localhost:8080/{s3_hash}.narinfo"
+          )
+
       with subtest("nix copy through ncro from S3 upstream"):
           proxy.fail(f"nix store ls {s3_path} 2>/dev/null")
           proxy.succeed(
@@ -355,7 +409,7 @@ in
           proxy.succeed(f"test -f {s3_path}/data")
           proxy.succeed(f"grep -q 's3 upstream' {s3_path}/data")
 
-      with subtest("ncro proxies narinfo from authenticated upstream"):
+      with subtest("ncro falls back from S3 miss to authenticated upstream"):
           out = proxy.succeed(
               f"curl -sf http://localhost:8080/{auth_hash}.narinfo"
           )
