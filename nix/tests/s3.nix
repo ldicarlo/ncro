@@ -19,8 +19,8 @@
   garageRpcSecret = "c8b325ea88a9ad61e58d0ed9ba91fd0db70699e3a30ca2d8a70ee0c4a09ceaf2";
   garageRegion = "garage";
   garageBucket = "nix-cache";
-  garageAccessKey = "GK000000000000000000";
-  garageSecretKey = "garage-secret-key-for-ncro-s3-vm-test-000000";
+  garageAccessKey = "GK000000000000000000000000";
+  garageSecretKey = "0000000000000000000000000000000000000000000000000000000000000001";
 
   # Credentials for the nginx-protected nix-serve (auth subtest).
   authUser = "ncro";
@@ -120,13 +120,24 @@ in
                 ${pkgs.garage}/bin/garage bucket allow \
                   --read --write ${garageBucket} --key nix-upload
 
+                mkdir -p /etc/nix
+                if [ ! -f /etc/nix/cache-key.sec ]; then
+                  ${config.nix.package}/bin/nix-store \
+                    --generate-binary-cache-key "${cacheKeyName}" \
+                    /etc/nix/cache-key.sec \
+                    /etc/nix/cache-key.pub
+                fi
+                chmod 644 /etc/nix/cache-key.pub /etc/nix/cache-key.sec
+                ${config.nix.package}/bin/nix store sign \
+                  --key-file /etc/nix/cache-key.sec \
+                  "${s3Payload}"
+
                 # Upload the store path as a Nix binary cache.
                 export AWS_ACCESS_KEY_ID=${garageAccessKey}
                 export AWS_SECRET_ACCESS_KEY=${garageSecretKey}
                 export AWS_REGION=${garageRegion}
                 ${config.nix.package}/bin/nix copy \
                     --to 's3://${garageBucket}?endpoint=127.0.0.1:3900&scheme=http&region=${garageRegion}' \
-                    --no-require-sigs \
                     "${s3Payload}"
               '';
             };
@@ -354,11 +365,14 @@ in
               f"auth upstream missing from /health: {urls}"
 
       with subtest("ncro proxies narinfo from S3 upstream"):
+          cache_public_key = backend.succeed("cat /etc/nix/cache-key.pub").strip()
           out = proxy.succeed(
               f"curl -sf http://localhost:8080/{s3_hash}.narinfo"
           )
           assert "StorePath" in out, \
               f"ncro did not proxy S3 narinfo: {out!r}"
+          assert "Sig: ${cacheKeyName}:" in out, \
+              f"S3 narinfo missing signature: {out!r}"
 
       with subtest("ncro preserves byte-range responses from S3 NARs"):
           narinfo = proxy.succeed(
@@ -404,7 +418,7 @@ in
       with subtest("nix copy through ncro from S3 upstream"):
           proxy.fail(f"nix store ls {s3_path} 2>/dev/null")
           proxy.succeed(
-              f"nix copy --from http://localhost:8080 --no-require-sigs {s3_path}"
+              f"nix copy --from http://localhost:8080 --extra-trusted-public-keys '{cache_public_key}' {s3_path}"
           )
           proxy.succeed(f"test -f {s3_path}/data")
           proxy.succeed(f"grep -q 's3 upstream' {s3_path}/data")
@@ -419,7 +433,7 @@ in
       with subtest("nix copy through ncro from authenticated upstream"):
           proxy.fail(f"nix store ls {auth_path} 2>/dev/null")
           proxy.succeed(
-              f"nix copy --from http://localhost:8080 --no-require-sigs {auth_path}"
+              f"nix copy --from http://localhost:8080 --extra-trusted-public-keys '{cache_public_key}' {auth_path}"
           )
           proxy.succeed(f"test -f {auth_path}/data")
           proxy.succeed(f"grep -q 'auth upstream' {auth_path}/data")
