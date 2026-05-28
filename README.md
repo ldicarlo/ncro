@@ -164,8 +164,6 @@ priority = 20
 [[upstreams]]
 url      = "s3://my-bucket?endpoint=minio.example.com&scheme=https"
 priority = 15
-username = "access-key-id"
-password = "secret-access-key"
 
 # Private HTTP cache requiring Basic Auth
 [[upstreams]]
@@ -220,20 +218,22 @@ you want a fixed config file but still need to tweak one or two settings.
 
 ### S3 Upstreams
 
-ncro accepts Nix-style `s3://` URLs in the `url` field and translates them to
-their HTTP(S) equivalent at startup. The rest of the system sees a plain HTTP
-URL. No special runtime path is needed.
+ncro accepts Nix-style `s3://` URLs in the `url` field and fetches narinfo/NAR
+objects through the native AWS S3 SDK. Credentials are loaded through the
+standard AWS provider chain: environment variables, shared config/credentials
+files, `profile=`, or instance/task identity where available.
 
 Supported query parameters:
 
 <!--markdownlint-disable MD013-->
 
-| Parameter  | Description                                                                                                                         |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `endpoint` | Custom S3-compatible host (MinIO, Garage, Backblaze, …). When set, path-based addressing is used: `{scheme}://{endpoint}/{bucket}`. |
-| `scheme`   | `http` or `https`. Only meaningful with `endpoint`. Default: `https`.                                                               |
-| `region`   | AWS region. Produces virtual-hosted endpoint `{bucket}.s3.{region}.amazonaws.com`.                                                  |
-| `profile`  | AWS credential profile. Accepted but currently ignored; unauthenticated or `username`/`password`-based auth should be used instead. |
+| Parameter          | Description                                                                                                     |
+| ------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `endpoint`         | Custom S3-compatible host (MinIO, Garage, Backblaze, ...).                                                      |
+| `scheme`           | `http` or `https`. Only meaningful with `endpoint`. Default: `https`.                                           |
+| `region`           | AWS region. Default: `us-east-1`.                                                                               |
+| `profile`          | AWS credential profile name for the standard AWS config/credentials files.                                      |
+| `addressing-style` | `auto`, `path`, or `virtual`. Default: `auto`; custom endpoints and dotted bucket names use path-style in auto. |
 
 <!--markdownlint-enable MD013-->
 
@@ -242,20 +242,17 @@ Supported query parameters:
 [[upstreams]]
 url      = "s3://my-bucket?endpoint=minio.example.com&scheme=https"
 priority = 15
-username = "access-key-id"
-password = "secret-access-key"
 
-# AWS S3 bucket with explicit region (public or IAM-anonymous)
+# AWS S3 bucket with explicit region and credential profile
 [[upstreams]]
-url      = "s3://my-nix-cache?region=eu-west-1"
+url      = "s3://my-nix-cache?region=eu-west-1&profile=cache-readonly"
 priority = 20
 ```
 
 > [!NOTE]
-> Authenticated AWS requests using SigV4 (i.e. `profile=`) are not yet
-> supported. For private S3-compatible stores, use `username`/`password` with
-> HTTP Basic Auth. For AWS S3, make the bucket publicly readable or use a
-> pre-signed URL proxy in front of ncro.
+> `username`/`password` are for HTTP Basic Auth upstreams only. S3 upstreams use
+> AWS credentials, for example `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`,
+> or a named `profile=`.
 
 ### Upstream Authentication
 
