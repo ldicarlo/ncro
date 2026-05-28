@@ -14,6 +14,7 @@ use ncro_config::UpstreamConfig;
 use ncro_db::Db;
 use ncro_health::{Prober, Status, UpstreamHealth};
 use ncro_router::{Router, RouterError};
+use ncro_s3::S3ClientPool;
 use serde::Serialize;
 use tower_http::timeout::{RequestBodyTimeoutLayer, ResponseBodyTimeoutLayer};
 
@@ -23,6 +24,7 @@ pub struct AppState {
   prober:         Prober,
   db:             Db,
   upstreams:      Vec<UpstreamConfig>,
+  s3:             S3ClientPool,
   client:         reqwest::Client,
   cache_priority: i32,
 }
@@ -41,14 +43,20 @@ pub fn app(
   read_timeout: std::time::Duration,
   write_timeout: std::time::Duration,
 ) -> Result<AxumRouter, reqwest::Error> {
+  let s3 = S3ClientPool::default();
+  for upstream in &upstreams {
+    if let Some(config) = &upstream.s3 {
+      s3.register(upstream.url.clone(), config.clone());
+    }
+  }
   let state = AppState {
     router,
     prober,
     db,
     upstreams,
+    s3,
     client: reqwest::Client::builder()
       .read_timeout(read_timeout)
-      .timeout(write_timeout)
       .build()?,
     cache_priority,
   };
@@ -203,6 +211,7 @@ async fn nar(
     && entry.is_valid()
     && let Some(resp) = try_nar_upstream(
       &state.client,
+      &state.s3,
       req.method().clone(),
       req.headers(),
       &entry.upstream_url,
@@ -227,6 +236,7 @@ async fn nar(
     for h in group {
       if let Some(resp) = try_nar_upstream(
         &state.client,
+        &state.s3,
         req.method().clone(),
         req.headers(),
         &h.url,
@@ -270,12 +280,26 @@ async fn upstream_urls(state: &AppState) -> Vec<String> {
 
 async fn try_nar_upstream(
   client: &reqwest::Client,
+  s3: &S3ClientPool,
   method: Method,
   headers: &HeaderMap,
   upstream: &str,
   path: &str,
   auth: Option<(String, Option<String>)>,
 ) -> Option<Response> {
+  if s3.contains(upstream) {
+    let key = path.trim_start_matches('/');
+    if method == Method::HEAD {
+      let metadata = s3.head_object_metadata(upstream, key).await.ok()??;
+      return Some(response_from_s3_head(metadata));
+    }
+    if method != Method::GET {
+      return None;
+    }
+    let range = headers.get("range").and_then(|value| value.to_str().ok());
+    let object = s3.get_object(upstream, key, range).await.ok()??;
+    return Some(response_from_s3(object));
+  }
   let resp = upstream_request(
     client,
     method,
@@ -354,5 +378,49 @@ fn response_from_reqwest(resp: reqwest::Response) -> Response {
   }
   out
     .body(Body::from_stream(stream))
+    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+fn response_from_s3(object: ncro_s3::S3Object) -> Response {
+  let mut out = Response::builder()
+    .status(StatusCode::from_u16(object.status).unwrap_or(StatusCode::OK));
+  for (name, value) in [
+    ("accept-ranges", object.accept_ranges),
+    ("content-type", object.content_type),
+    (
+      "content-length",
+      object.content_length.map(|value| value.to_string()),
+    ),
+    ("content-range", object.content_range),
+    ("etag", object.etag),
+    ("last-modified", object.last_modified),
+  ] {
+    if let Some(value) = value {
+      out = out.header(name, value);
+    }
+  }
+  out
+    .body(Body::from_stream(S3ClientPool::body_stream(object.body)))
+    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+fn response_from_s3_head(metadata: ncro_s3::S3ObjectHead) -> Response {
+  let mut out = Response::builder().status(StatusCode::OK);
+  for (name, value) in [
+    ("accept-ranges", metadata.accept_ranges),
+    ("content-type", metadata.content_type),
+    (
+      "content-length",
+      metadata.content_length.map(|value| value.to_string()),
+    ),
+    ("etag", metadata.etag),
+    ("last-modified", metadata.last_modified),
+  ] {
+    if let Some(value) = value {
+      out = out.header(name, value);
+    }
+  }
+  out
+    .body(Body::empty())
     .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }

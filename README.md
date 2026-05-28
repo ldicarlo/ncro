@@ -130,8 +130,10 @@ $ ncro
 # Point at a config file
 $ ncro --config /etc/ncro/config.toml
 
-# Tell Nix to use it
-$ nix-shell -p hello --substituters http://localhost:8080
+# Tell Nix to use it. The trusted key must match the upstream narinfo signer.
+$ nix-shell -p hello \
+    --substituters http://localhost:8080 \
+    --extra-trusted-public-keys cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
 ```
 
 [installation document]: ./docs/install.md
@@ -155,17 +157,17 @@ write_timeout = "30s"
 [[upstreams]]
 url = "https://cache.nixos.org"
 priority = 10 # lower = preferred on latency ties (within 10%)
+public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
 
 [[upstreams]]
 url = "https://nix-community.cachix.org"
 priority = 20
+public_key = "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
 
-# S3-compatible cache (MinIO, Garage, etc.)
+# S3-compatible cache (Garage, MinIO etc.)
 [[upstreams]]
 url      = "s3://my-bucket?endpoint=minio.example.com&scheme=https"
 priority = 15
-username = "access-key-id"
-password = "secret-access-key"
 
 # Private HTTP cache requiring Basic Auth
 [[upstreams]]
@@ -177,15 +179,15 @@ password = "hunter2" # it says ******* on my screen it's secure!
 [cache]
 db_path = "/var/lib/ncro/routes.db"
 max_entries = 100000 # LRU eviction above this
-ttl = "1h" # how long a routing decision is trusted
+ttl = "1h"           # how long a routing decision is trusted
 negative_ttl = "10m" # cache misses for a short window
-latency_alpha = 0.3 # EMA smoothing factor (0 < alpha < 1)
+latency_alpha = 0.3  # EMA smoothing factor (0 < alpha < 1)
 
 [cache.mass_query]
-max_concurrent_races = 64 # total concurrent narinfo races
+max_concurrent_races = 64     # total concurrent narinfo races
 per_upstream_max_inflight = 8 # per-upstream narinfo head concurrency
 in_memory_negative_ttl = "5s" # short-lived miss suppression
-upstream_cooldown = "15s" # cooldown on transient upstream network errors
+upstream_cooldown = "15s"     # cooldown on transient upstream network errors
 
 [logging]
 level = "info" # debug | info | warn | error
@@ -202,7 +204,7 @@ address_family = "any"           # "any" | "ipv4" | "ipv6"
 [mesh]
 enabled = false
 bind_addr = "0.0.0.0:7946"
-peers = [] # list of {addr, public_key} peer entries
+peers = []       # list of {addr, public_key} peer entries
 private_key = "" # path to ed25519 key file; empty = ephemeral
 gossip_interval = "30s"
 ```
@@ -220,20 +222,22 @@ you want a fixed config file but still need to tweak one or two settings.
 
 ### S3 Upstreams
 
-ncro accepts Nix-style `s3://` URLs in the `url` field and translates them to
-their HTTP(S) equivalent at startup. The rest of the system sees a plain HTTP
-URL. No special runtime path is needed.
+ncro accepts Nix-style `s3://` URLs in the `url` field and fetches narinfo/NAR
+objects through the native AWS S3 SDK. Credentials are loaded through the
+standard AWS provider chain: environment variables, shared config/credentials
+files, `profile=`, or instance/task identity where available.
 
 Supported query parameters:
 
 <!--markdownlint-disable MD013-->
 
-| Parameter  | Description                                                                                                                         |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `endpoint` | Custom S3-compatible host (MinIO, Garage, Backblaze, …). When set, path-based addressing is used: `{scheme}://{endpoint}/{bucket}`. |
-| `scheme`   | `http` or `https`. Only meaningful with `endpoint`. Default: `https`.                                                               |
-| `region`   | AWS region. Produces virtual-hosted endpoint `{bucket}.s3.{region}.amazonaws.com`.                                                  |
-| `profile`  | AWS credential profile. Accepted but currently ignored; unauthenticated or `username`/`password`-based auth should be used instead. |
+| Parameter          | Description                                                                                                     |
+| ------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `endpoint`         | Custom S3-compatible host (MinIO, Garage, Backblaze, ...).                                                      |
+| `scheme`           | `http` or `https`. Only meaningful with `endpoint`. Default: `https`.                                           |
+| `region`           | AWS region. Default: `us-east-1`.                                                                               |
+| `profile`          | AWS credential profile name for the standard AWS config/credentials files.                                      |
+| `addressing-style` | `auto`, `path`, or `virtual`. Default: `auto`; custom endpoints and dotted bucket names use path-style in auto. |
 
 <!--markdownlint-enable MD013-->
 
@@ -242,20 +246,17 @@ Supported query parameters:
 [[upstreams]]
 url      = "s3://my-bucket?endpoint=minio.example.com&scheme=https"
 priority = 15
-username = "access-key-id"
-password = "secret-access-key"
 
-# AWS S3 bucket with explicit region (public or IAM-anonymous)
+# AWS S3 bucket with explicit region and credential profile
 [[upstreams]]
-url      = "s3://my-nix-cache?region=eu-west-1"
+url      = "s3://my-nix-cache?region=eu-west-1&profile=cache-readonly"
 priority = 20
 ```
 
 > [!NOTE]
-> Authenticated AWS requests using SigV4 (i.e. `profile=`) are not yet
-> supported. For private S3-compatible stores, use `username`/`password` with
-> HTTP Basic Auth. For AWS S3, make the bucket publicly readable or use a
-> pre-signed URL proxy in front of ncro.
+> `username`/`password` are for HTTP Basic Auth upstreams only. S3 upstreams use
+> AWS credentials, for example `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`,
+> or a named `profile=`.
 
 ### Upstream Authentication
 
@@ -277,19 +278,34 @@ the username field.
 ## NixOS Integration
 
 ```nix
-{
+{lib, ...}: {
   services.ncro = {
     enable = true;
     settings = {
       upstreams = [
-        { url = "https://cache.nixos.org"; priority = 10; }
-        { url = "https://nix-community.cachix.org"; priority = 20; }
+        {
+          url = "https://cache.nixos.org";
+          priority = 10;
+          public_key = "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=";
+        }
+
+        {
+          url = "https://nix-community.cachix.org";
+          priority = 20;
+          public_key = "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=";
+        }
       ];
     };
   };
 
-  # Point Nix at the proxy
-  nix.settings.substituters = [ "http://localhost:8080" ];
+  # Point Nix at the proxy. By default the module appends every configured
+  # upstream public_key to nix.settings.trusted-public-keys; set
+  # services.ncro.addUpstreamPublicKeys = false to manage those keys yourself.
+  # NOTE: ncro needs to be the *only* substituter if you wish to benefit
+  # from its capabilities fully. If there are other substituters in your
+  # list, or if you don't mkForce this option, ncro will perform less
+  # efficiently.
+  nix.settings.substituters = lib.mkForce [ "http://localhost:8080" ];
 }
 ```
 

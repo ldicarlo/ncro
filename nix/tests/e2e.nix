@@ -231,13 +231,21 @@ in
                   f"{node.name}: /nix-cache-info missing StoreDir: {out!r}"
 
       with subtest("each cache backend serves its own payload narinfo directly"):
+          cache1_public_key = bincache1.succeed("cat /etc/nix/cache-key.pub").strip()
+          cache2_public_key = bincache2.succeed("cat /etc/nix/cache-key.pub").strip()
+          trusted_keys = f"{cache1_public_key} {cache2_public_key}"
+
           out1 = bincache1.succeed(f"curl -sf http://localhost:5000/{hash1}.narinfo")
           assert "StorePath" in out1, \
               f"bincache1 (nix-serve-ng) did not serve narinfo for hash1: {out1!r}"
+          assert f"Sig: {cacheKey1Name}:" in out1, \
+              f"bincache1 narinfo missing signature: {out1!r}"
 
           out2 = bincache2.succeed(f"curl -sf http://localhost:5000/{hash2}.narinfo")
           assert "StorePath" in out2, \
               f"bincache2 (harmonia) did not serve narinfo for hash2: {out2!r}"
+          assert f"Sig: {cacheKey2Name}:" in out2, \
+              f"bincache2 narinfo missing signature: {out2!r}"
 
       with subtest("cross-backend: each cache returns 404 for the other's payload"):
           bincache1.fail(f"curl -sf http://localhost:5000/{hash2}.narinfo")
@@ -265,7 +273,7 @@ in
       with subtest("nix copy payload1 (nix-serve-ng) through host ncro"):
           host.fail(f"nix store ls {payload1_path} 2>/dev/null")
           host.succeed(
-              f"nix copy --from http://localhost:8080 --no-require-sigs {payload1_path}"
+              f"nix copy --from http://localhost:8080 --extra-trusted-public-keys '{trusted_keys}' {payload1_path}"
           )
           host.succeed(f"test -f {payload1_path}/data")
           host.succeed(f"grep -q 'nix-serve-ng' {payload1_path}/data")
@@ -273,7 +281,7 @@ in
       with subtest("nix copy payload2 (harmonia) through host ncro"):
           host.fail(f"nix store ls {payload2_path} 2>/dev/null")
           host.succeed(
-              f"nix copy --from http://localhost:8080 --no-require-sigs {payload2_path}"
+              f"nix copy --from http://localhost:8080 --extra-trusted-public-keys '{trusted_keys}' {payload2_path}"
           )
           host.succeed(f"test -f {payload2_path}/data")
           host.succeed(f"grep -q 'harmonia' {payload2_path}/data")
@@ -281,14 +289,14 @@ in
       with subtest("nix copy both payloads through secondary ncro (two hops)"):
           secondary.fail(f"nix store ls {payload1_path} 2>/dev/null")
           secondary.succeed(
-              f"nix copy --from http://localhost:8080 --no-require-sigs {payload1_path}"
+              f"nix copy --from http://localhost:8080 --extra-trusted-public-keys '{trusted_keys}' {payload1_path}"
           )
           secondary.succeed(f"test -f {payload1_path}/data")
           secondary.succeed(f"grep -q 'nix-serve-ng' {payload1_path}/data")
 
           secondary.fail(f"nix store ls {payload2_path} 2>/dev/null")
           secondary.succeed(
-              f"nix copy --from http://localhost:8080 --no-require-sigs {payload2_path}"
+              f"nix copy --from http://localhost:8080 --extra-trusted-public-keys '{trusted_keys}' {payload2_path}"
           )
           secondary.succeed(f"test -f {payload2_path}/data")
           secondary.succeed(f"grep -q 'harmonia' {payload2_path}/data")
