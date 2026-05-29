@@ -19,8 +19,8 @@
   garageRpcSecret = "c8b325ea88a9ad61e58d0ed9ba91fd0db70699e3a30ca2d8a70ee0c4a09ceaf2";
   garageRegion = "garage";
   garageBucket = "nix-cache";
-  garageAccessKey = "GK000000000000000000";
-  garageSecretKey = "garage-secret-key-for-ncro-s3-vm-test-000000";
+  garageAccessKey = "GK000000000000000000000000";
+  garageSecretKey = "0000000000000000000000000000000000000000000000000000000000000001";
 
   # Credentials for the nginx-protected nix-serve (auth subtest).
   authUser = "ncro";
@@ -371,7 +371,7 @@ in
           )
           assert "StorePath" in out, \
               f"ncro did not proxy S3 narinfo: {out!r}"
-          assert f"Sig: ${cacheKeyName}:" in out, \
+          assert "Sig: ${cacheKeyName}:" in out, \
               f"S3 narinfo missing signature: {out!r}"
 
       with subtest("ncro preserves byte-range responses from S3 NARs"):

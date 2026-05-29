@@ -428,7 +428,6 @@ in
           test_store_path = "${testStorePath}"
           store_hash = test_store_path.split("/")[3].split("-")[0]
           cache_public_key = node1.succeed("cat /etc/nix/cache-key.pub").strip()
-          node3_cache_public_key = node3.succeed("cat /etc/nix/cache-key.pub").strip()
 
           # ncro on node2 must proxy the narinfo request to node1 (which has the
           # path in its local nix-serve). node1 is discovered via mDNS.
@@ -458,7 +457,7 @@ in
           node3.succeed(
               "nix copy "
               "--from http://localhost:8080 "
-              f"--extra-trusted-public-keys '{node3_cache_public_key}' "
+              f"--extra-trusted-public-keys '{cache_public_key}' "
               f"{test_store_path} "
               "2>&1"
           )
@@ -496,7 +495,7 @@ in
           node2.succeed(
               "nix copy "
               "--from http://localhost:8080 "
-              f"--extra-trusted-public-keys '{node3_cache_public_key}' "
+              f"--extra-trusted-public-keys '{cache_public_key}' "
               f"{test_store_path} "
               "2>&1"
           )
